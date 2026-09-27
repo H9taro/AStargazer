@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -65,6 +66,7 @@ import com.example.astargazer.ui.camera.CameraControlManager
 import com.example.astargazer.ui.camera.CameraPreview
 import com.example.astargazer.util.BitmapUtils
 import com.example.astargazer.util.ImageContrastAnalyzer
+import com.example.astargazer.util.StorageHelper
 import com.example.astargazer.util.rememberTtsManager
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -83,8 +85,9 @@ enum class WorkflowStep {
     POLARIS_TEST_SHOOTING_ADJUST,   // 3. 試写と自動調整
     TEST_RESULT_DISPLAY,            // 4. 試写結果表示
     DIRECTION_CONFIRM_NOTICE,       // 5. 撮影方向確定案内
-    DARK_FRAME_SHOOTING,            // 6. ダークフレーム撮影
-    INTERVAL_SHOOTING               // 7. インターバル撮影
+    DARK_FRAME_NOTICE,              // 6a. ダークフレーム撮影案内（カバー装着指示）
+    DARK_FRAME_SHOOTING,            // 6b. ダークフレーム撮影実行
+    INTERVAL_SHOOTING_READY         // 7. インターバル撮影準備完了
 }
 
 @Composable
@@ -164,7 +167,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalCamera2Interop::class)
 @Composable
 private fun CameraContent() {
     val context = LocalContext.current
@@ -177,7 +180,7 @@ private fun CameraContent() {
 
     // 試写キャプチャ画像と調整状態
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var isAdjusting by remember { mutableStateOf(false) }
+    var isProcessing by remember { mutableStateOf(false) }
 
     // 現在のワークフローステップ
     var currentStep by remember { mutableStateOf(WorkflowStep.EXPOSURE_SETTING) }
@@ -191,7 +194,7 @@ private fun CameraContent() {
         mutableStateOf("露出時間を選択し、開始ボタンを押してください。")
     }
 
-    // 試写と自動調整の実行関数
+    // ステップ3: 試写と自動調整の実行関数
     fun runTestShootingAndAutoAdjust() {
         val camera = cameraInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -202,7 +205,7 @@ private fun CameraContent() {
             return
         }
 
-        isAdjusting = true
+        isProcessing = true
         statusMessage = "試写を実行中: ピント(無限遠) & ISO(1600) 自動調整..."
 
         // 1. マニュアルフォーカス(無限遠: 0.0f) と ISO感度(1600) を設定
@@ -225,26 +228,60 @@ private fun CameraContent() {
 
                         if (bitmap != null) {
                             capturedTestBitmap = bitmap
-                            // 3. コントラスト値（星像の明瞭度）を計算
                             val score = ImageContrastAnalyzer.calculateContrastScore(bitmap)
                             val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
 
-                            isAdjusting = false
+                            isProcessing = false
                             statusMessage = "試写調整完了 (コントラストスコア: $scoreFormatted)\n画角を確認してください。"
 
                             // 自動調整成功後、ステップ4（試写結果表示）へ遷移
                             currentStep = WorkflowStep.TEST_RESULT_DISPLAY
                         } else {
-                            isAdjusting = false
+                            isProcessing = false
                             statusMessage = "試写画像の取得に失敗しました。"
                         }
                     }
                 }
 
-                override fun onError(exception: androidx.camera.core.ImageCaptureException) {
+                override fun onError(exception: ImageCaptureException) {
                     Log.e("MainScreen", "Test capture failed", exception)
-                    isAdjusting = false
+                    isProcessing = false
                     statusMessage = "試写撮影エラー: ${exception.message}"
+                }
+            }
+        )
+    }
+
+    // ステップ6: ダークフレーム撮影の実行関数
+    fun runDarkFrameShooting() {
+        val imageCapture = imageCaptureInstance ?: run {
+            statusMessage = "キャプチャ機能の準備ができていません。"
+            return
+        }
+
+        isProcessing = true
+        statusMessage = "ダークフレーム撮影中 (${selectedExposureSeconds}秒)..."
+
+        val darkFrameFile = StorageHelper.getDarkFrameFile(context)
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(darkFrameFile).build()
+
+        val executor = ContextCompat.getMainExecutor(context)
+        imageCapture.takePicture(
+            outputOptions,
+            executor,
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    isProcessing = false
+                    val message = "ダークフレーム撮影が完了しました。カバーを外してください。"
+                    statusMessage = message
+                    ttsManager.speak(message)
+                    currentStep = WorkflowStep.INTERVAL_SHOOTING_READY
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    Log.e("MainScreen", "Dark frame capture failed", exception)
+                    isProcessing = false
+                    statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
                 }
             }
         )
@@ -269,15 +306,23 @@ private fun CameraContent() {
                 // 試写結果表示中
             }
             WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
+                // ステップ5: 音声応答＆案内
                 val message = "撮影したい方向を決めて、シャッターを押してください"
                 statusMessage = message
                 ttsManager.speak(message)
             }
-            WorkflowStep.DARK_FRAME_SHOOTING -> {
-                statusMessage = "ダークフレーム撮影中..."
+            WorkflowStep.DARK_FRAME_NOTICE -> {
+                // ステップ6a: ダークフレーム撮影前の案内
+                val message = "レンズを覆って、シャッターを押してください"
+                statusMessage = "ダークフレーム撮影準備: レンズ（カメラ）を覆った状態でシャッターを押してください。"
+                ttsManager.speak(message)
             }
-            WorkflowStep.INTERVAL_SHOOTING -> {
-                statusMessage = "インターバル撮影中..."
+            WorkflowStep.DARK_FRAME_SHOOTING -> {
+                // ステップ6b: ダークフレーム撮影実行
+                runDarkFrameShooting()
+            }
+            WorkflowStep.INTERVAL_SHOOTING_READY -> {
+                statusMessage = "インターバル撮影の準備ができました。シャッターを押すと開始します。"
             }
         }
     }
@@ -371,8 +416,8 @@ private fun CameraContent() {
             }
         }
 
-        // 中央：調整中のプログレス表示
-        if (isAdjusting) {
+        // 中央：処理中のプログレス表示
+        if (isProcessing) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -383,7 +428,7 @@ private fun CameraContent() {
                     CircularProgressIndicator(color = Color(0xFF1E88E5))
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "星像自動調整中...",
+                        text = if (currentStep == WorkflowStep.DARK_FRAME_SHOOTING) "ダークフレーム撮影中..." else "星像自動調整中...",
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
@@ -433,16 +478,28 @@ private fun CameraContent() {
                             // シャッター押下後、北極星付近の試写と自動調整を開始
                             updateStep(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
                         }
+                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {
+                            // 調整中のため何もしない
+                        }
                         WorkflowStep.TEST_RESULT_DISPLAY -> {
-                            // 試写確認完了 -> ステップ5 (撮影方向確定通知) へ進行
+                            // 試写確認完了 -> ステップ5 (撮影方向確定案内) へ進行
                             updateStep(WorkflowStep.DIRECTION_CONFIRM_NOTICE)
                         }
-                        else -> {
-                            updateStep(WorkflowStep.POLARIS_ALIGNMENT_NOTICE)
+                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
+                            // ステップ5のシャッター押下 -> ステップ6a (ダークフレーム案内) へ進行
+                            updateStep(WorkflowStep.DARK_FRAME_NOTICE)
+                        }
+                        WorkflowStep.DARK_FRAME_NOTICE -> {
+                            // ステップ6aのシャッター押下 -> ステップ6b (ダークフレーム撮影実行) へ進行
+                            updateStep(WorkflowStep.DARK_FRAME_SHOOTING)
+                        }
+                        WorkflowStep.DARK_FRAME_SHOOTING, WorkflowStep.INTERVAL_SHOOTING_READY -> {
+                            // インターバル撮影開始前準備状態
+                            updateStep(WorkflowStep.INTERVAL_SHOOTING_READY)
                         }
                     }
                 },
-                enabled = !isAdjusting,
+                enabled = !isProcessing,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
