@@ -1,7 +1,9 @@
 package com.example.astargazer.ui.camera
 
 import android.util.Log
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -17,7 +19,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 @Composable
 fun CameraPreview(
     modifier: Modifier = Modifier,
-    onCameraProviderReady: (ProcessCameraProvider) -> Unit = {}
+    onCameraBound: (Camera, ImageCapture) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -34,20 +36,26 @@ fun CameraPreview(
         cameraProviderFuture.addListener({
             try {
                 val cameraProvider = cameraProviderFuture.get()
-                onCameraProviderReady(cameraProvider)
 
                 val preview = Preview.Builder().build().also {
                     it.surfaceProvider = previewView.surfaceProvider
                 }
 
+                val imageCapture = ImageCapture.Builder()
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .build()
+
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
+                val camera = cameraProvider.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
-                    preview
+                    preview,
+                    imageCapture
                 )
+
+                onCameraBound(camera, imageCapture)
             } catch (e: Exception) {
                 Log.e("CameraPreview", "Camera binding failed", e)
             }
