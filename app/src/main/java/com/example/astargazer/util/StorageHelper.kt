@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Environment
 import android.os.StatFs
 import java.io.File
+import java.util.Locale
 
 object StorageHelper {
 
@@ -14,6 +15,15 @@ object StorageHelper {
         val path = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir
         val stat = StatFs(path.path)
         return stat.availableBlocksLong * stat.blockSizeLong
+    }
+
+    /**
+     * 人間が読みやすい形式 (例: "12.5 GB") で空き容量文字列を取得
+     */
+    fun getFormattedAvailableStorage(context: Context): String {
+        val bytes = getAvailableStorageBytes(context)
+        val gb = bytes / (1024.0 * 1024.0 * 1024.0)
+        return String.format(Locale.JAPAN, "%.2f GB", gb)
     }
 
     /**
@@ -39,6 +49,6 @@ object StorageHelper {
         val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AStargazer/Interval")
         if (!dir.exists()) dir.mkdirs()
         val timestamp = System.currentTimeMillis()
-        return File(dir, "IMG_${index}_${timestamp}.jpg")
+        return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, timestamp))
     }
 }

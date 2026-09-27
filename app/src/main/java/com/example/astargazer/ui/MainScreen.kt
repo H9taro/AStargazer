@@ -68,8 +68,11 @@ import com.example.astargazer.util.BitmapUtils
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.StorageHelper
 import com.example.astargazer.util.rememberTtsManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Locale
+import kotlin.coroutines.resume
 
 /**
  * 露出時間の選択肢（秒数）
@@ -87,7 +90,9 @@ enum class WorkflowStep {
     DIRECTION_CONFIRM_NOTICE,       // 5. 撮影方向確定案内
     DARK_FRAME_NOTICE,              // 6a. ダークフレーム撮影案内（カバー装着指示）
     DARK_FRAME_SHOOTING,            // 6b. ダークフレーム撮影実行
-    INTERVAL_SHOOTING_READY         // 7. インターバル撮影準備完了
+    INTERVAL_SHOOTING_READY,        // 7a. インターバル撮影準備完了
+    INTERVAL_SHOOTING_ACTIVE,       // 7b. インターバル撮影ループ実行中
+    INTERVAL_SHOOTING_FINISHED      // 7c. インターバル撮影完了/停止
 }
 
 @Composable
@@ -178,9 +183,13 @@ private fun CameraContent() {
     var cameraInstance by remember { mutableStateOf<Camera?>(null) }
     var imageCaptureInstance by remember { mutableStateOf<ImageCapture?>(null) }
 
-    // 試写キャプチャ画像と調整状態
+    // 試写キャプチャ画像と状態
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
+
+    // インターバル撮影状態
+    var isIntervalShootingActive by remember { mutableStateOf(false) }
+    var shotCount by remember { mutableIntStateOf(0) }
 
     // 現在のワークフローステップ
     var currentStep by remember { mutableStateOf(WorkflowStep.EXPOSURE_SETTING) }
@@ -192,6 +201,84 @@ private fun CameraContent() {
     // 現在のステータスメッセージ
     var statusMessage by remember {
         mutableStateOf("露出時間を選択し、開始ボタンを押してください。")
+    }
+
+    // 単発撮影用サスペンド関数（インターバル撮影の1コマ分）
+    suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int): Boolean {
+        return suspendCancellableCoroutine { continuation ->
+            val outputFile = StorageHelper.createIntervalImageFile(context, index)
+            val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
+            val executor = ContextCompat.getMainExecutor(context)
+
+            imageCapture.takePicture(
+                outputOptions,
+                executor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        if (continuation.isActive) continuation.resume(true)
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        Log.e("MainScreen", "Interval frame $index capture error", exception)
+                        if (continuation.isActive) continuation.resume(false)
+                    }
+                }
+            )
+        }
+    }
+
+    // インターバル撮影ループの開始関数
+    fun startIntervalShootingLoop() {
+        val imageCapture = imageCaptureInstance ?: run {
+            statusMessage = "キャプチャ機能の準備ができていません。"
+            return
+        }
+
+        isIntervalShootingActive = true
+        currentStep = WorkflowStep.INTERVAL_SHOOTING_ACTIVE
+        shotCount = 0
+
+        coroutineScope.launch {
+            val startMsg = "インターバル撮影を開始しました。"
+            statusMessage = startMsg
+            ttsManager.speak(startMsg)
+
+            while (isIntervalShootingActive) {
+                // 1. ストレージ空き容量チェック (1GB = 1,073,741,824 バイト以下で自動停止)
+                if (!StorageHelper.hasSufficientStorage(context)) {
+                    isIntervalShootingActive = false
+                    val stopMsg = "空き容量が1GB以下になったため、インターバル撮影を終了しました。(撮影数: ${shotCount}枚)"
+                    statusMessage = stopMsg
+                    ttsManager.speak("ストレージ容量制限のため撮影を終了しました")
+                    currentStep = WorkflowStep.INTERVAL_SHOOTING_FINISHED
+                    break
+                }
+
+                shotCount++
+                val storageStr = StorageHelper.getFormattedAvailableStorage(context)
+                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 空き容量: ${storageStr}]"
+
+                // 2. 露出1コマ分の撮影
+                val success = captureIntervalFrame(imageCapture, shotCount)
+                if (!success) {
+                    Log.w("MainScreen", "Failed to capture frame $shotCount")
+                }
+
+                // 3. 次のコマまでの短い待機 (コマ間ウェイト 1秒)
+                delay(1000L)
+            }
+        }
+    }
+
+    // インターバル撮影の停止処理
+    fun stopIntervalShooting() {
+        if (isIntervalShootingActive) {
+            isIntervalShootingActive = false
+            currentStep = WorkflowStep.INTERVAL_SHOOTING_FINISHED
+            val msg = "インターバル撮影を停止しました。(合計撮影数: ${shotCount}枚)"
+            statusMessage = msg
+            ttsManager.speak("インターバル撮影を終了しました")
+        }
     }
 
     // ステップ3: 試写と自動調整の実行関数
@@ -306,23 +393,27 @@ private fun CameraContent() {
                 // 試写結果表示中
             }
             WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
-                // ステップ5: 音声応答＆案内
                 val message = "撮影したい方向を決めて、シャッターを押してください"
                 statusMessage = message
                 ttsManager.speak(message)
             }
             WorkflowStep.DARK_FRAME_NOTICE -> {
-                // ステップ6a: ダークフレーム撮影前の案内
                 val message = "レンズを覆って、シャッターを押してください"
                 statusMessage = "ダークフレーム撮影準備: レンズ（カメラ）を覆った状態でシャッターを押してください。"
                 ttsManager.speak(message)
             }
             WorkflowStep.DARK_FRAME_SHOOTING -> {
-                // ステップ6b: ダークフレーム撮影実行
                 runDarkFrameShooting()
             }
             WorkflowStep.INTERVAL_SHOOTING_READY -> {
-                statusMessage = "インターバル撮影の準備ができました。シャッターを押すと開始します。"
+                val storageStr = StorageHelper.getFormattedAvailableStorage(context)
+                statusMessage = "インターバル撮影の準備完了 (空き容量: $storageStr)\nシャッターボタンで開始します。"
+            }
+            WorkflowStep.INTERVAL_SHOOTING_ACTIVE -> {
+                startIntervalShootingLoop()
+            }
+            WorkflowStep.INTERVAL_SHOOTING_FINISHED -> {
+                stopIntervalShooting()
             }
         }
     }
@@ -372,15 +463,20 @@ private fun CameraContent() {
                     fontWeight = FontWeight.Bold
                 )
 
-                // 露出時間ドロップダウン
+                // 露出時間ドロップダウン (インターバル撮影実行中は変更不可)
                 ExposedDropdownMenuBox(
-                    expanded = isDropdownExpanded,
-                    onExpandedChange = { isDropdownExpanded = !isDropdownExpanded }
+                    expanded = isDropdownExpanded && !isIntervalShootingActive,
+                    onExpandedChange = {
+                        if (!isIntervalShootingActive) {
+                            isDropdownExpanded = !isDropdownExpanded
+                        }
+                    }
                 ) {
                     OutlinedTextField(
                         value = "${selectedExposureSeconds}秒",
                         onValueChange = {},
                         readOnly = true,
+                        enabled = !isIntervalShootingActive,
                         label = { Text("露出時間", color = Color.LightGray, fontSize = 12.sp) },
                         trailingIcon = {
                             ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded)
@@ -399,7 +495,7 @@ private fun CameraContent() {
                     )
 
                     ExposedDropdownMenu(
-                        expanded = isDropdownExpanded,
+                        expanded = isDropdownExpanded && !isIntervalShootingActive,
                         onDismissRequest = { isDropdownExpanded = false }
                     ) {
                         EXPOSURE_TIMES_SECONDS.forEach { seconds ->
@@ -460,7 +556,7 @@ private fun CameraContent() {
             )
         }
 
-        // 下部：メイン操作（シャッター）ボタン
+        // 下部：メイン操作（シャッター/停止）ボタン
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -475,27 +571,30 @@ private fun CameraContent() {
                             updateStep(WorkflowStep.POLARIS_ALIGNMENT_NOTICE)
                         }
                         WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> {
-                            // シャッター押下後、北極星付近の試写と自動調整を開始
                             updateStep(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
                         }
                         WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {
-                            // 調整中のため何もしない
+                            // 調整中のため待機
                         }
                         WorkflowStep.TEST_RESULT_DISPLAY -> {
-                            // 試写確認完了 -> ステップ5 (撮影方向確定案内) へ進行
                             updateStep(WorkflowStep.DIRECTION_CONFIRM_NOTICE)
                         }
                         WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
-                            // ステップ5のシャッター押下 -> ステップ6a (ダークフレーム案内) へ進行
                             updateStep(WorkflowStep.DARK_FRAME_NOTICE)
                         }
                         WorkflowStep.DARK_FRAME_NOTICE -> {
-                            // ステップ6aのシャッター押下 -> ステップ6b (ダークフレーム撮影実行) へ進行
                             updateStep(WorkflowStep.DARK_FRAME_SHOOTING)
                         }
-                        WorkflowStep.DARK_FRAME_SHOOTING, WorkflowStep.INTERVAL_SHOOTING_READY -> {
-                            // インターバル撮影開始前準備状態
-                            updateStep(WorkflowStep.INTERVAL_SHOOTING_READY)
+                        WorkflowStep.DARK_FRAME_SHOOTING -> {
+                            // ダークフレーム撮影中のため待機
+                        }
+                        WorkflowStep.INTERVAL_SHOOTING_READY, WorkflowStep.INTERVAL_SHOOTING_FINISHED -> {
+                            // 本番インターバル撮影開始
+                            updateStep(WorkflowStep.INTERVAL_SHOOTING_ACTIVE)
+                        }
+                        WorkflowStep.INTERVAL_SHOOTING_ACTIVE -> {
+                            // インターバル撮影中にボタンを押すと手動停止
+                            updateStep(WorkflowStep.INTERVAL_SHOOTING_FINISHED)
                         }
                     }
                 },
@@ -503,21 +602,31 @@ private fun CameraContent() {
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Red
+                    containerColor = if (isIntervalShootingActive) Color(0xFFD32F2F) else Color.Red
                 ),
                 contentPadding = PaddingValues(0.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(60.dp)
-                        .background(Color.White, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
+                if (isIntervalShootingActive) {
+                    // 撮影中は「STOP」アイコン風の四角を表示
                     Box(
                         modifier = Modifier
-                            .size(52.dp)
-                            .background(Color.Red, CircleShape)
+                            .size(28.dp)
+                            .background(Color.White, RoundedCornerShape(4.dp))
                     )
+                } else {
+                    // 通常のシャッターボタン表示
+                    Box(
+                        modifier = Modifier
+                            .size(60.dp)
+                            .background(Color.White, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .background(Color.Red, CircleShape)
+                        )
+                    }
                 }
             }
         }
