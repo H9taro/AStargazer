@@ -15,6 +15,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,7 +44,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -62,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -228,7 +229,7 @@ private fun MainAppContent() {
         mutableStateOf("露出時間を選択し、開始ボタンを押してください。")
     }
 
-    // ★ 仕様変更: 撮影前設定の強制的キャンセル
+    // ★ 仕様変更: 上向きスワイプ等による撮影前設定の強制的キャンセル
     fun cancelSetup() {
         isProcessing = false
         isSetupCompleted = false
@@ -241,7 +242,7 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // ★ 仕様変更: インターバル撮影の強制的キャンセル
+    // ★ 仕様変更: 上向きスワイプ等によるインターバル撮影の強制的キャンセル
     fun cancelIntervalShooting() {
         if (isIntervalShootingActive) {
             isIntervalShootingActive = false
@@ -519,7 +520,7 @@ private fun MainAppContent() {
         ) {
             when (selectedTab) {
                 MainMenuTab.SETUP -> {
-                    // メニュー1: 撮影前設定画面
+                    // メニュー1: 撮影前設定画面 (上向きスワイプでキャンセル)
                     SetupTabContent(
                         currentStep = currentStep,
                         capturedTestBitmap = capturedTestBitmap,
@@ -539,7 +540,7 @@ private fun MainAppContent() {
                 }
 
                 MainMenuTab.INTERVAL -> {
-                    // メニュー2: インターバル撮影画面
+                    // メニュー2: インターバル撮影画面 (上向きスワイプでキャンセル)
                     IntervalTabContent(
                         isIntervalActive = isIntervalShootingActive,
                         shotCount = shotCount,
@@ -586,7 +587,28 @@ private fun SetupTabContent(
     onCancelSetup: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    // 上向きスワイプジェスチャーの検出用変数の保持
+    var totalDragY by remember { mutableFloatStateOf(0f) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // ★ 仕様変更: 上向きスワイプ（Y軸マイナス方向のドラッグ）でキャンセル
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { totalDragY = 0f },
+                    onDragEnd = {
+                        if (totalDragY < -120f) { // 画面上方への一定以上のスワイプを検知
+                            onCancelSetup()
+                        }
+                    },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragY += dragAmount
+                    }
+                )
+            }
+    ) {
         // バックグラウンド：CameraX プレビュー または 試写画像
         if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
             Image(
@@ -602,7 +624,7 @@ private fun SetupTabContent(
             )
         }
 
-        // 上部コントロールパネル (露出時間設定＆キャンセルボタン)
+        // 上部コントロールパネル (露出時間設定 ＆ 上スワイプキャンセルのガイド)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -615,64 +637,57 @@ private fun SetupTabContent(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = "AStargazer - 撮影前設定",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Column {
+                    Text(
+                        text = "AStargazer - 撮影前設定",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "↑ 上スワイプでキャンセル",
+                        color = Color(0xFFFF8A80),
+                        fontSize = 11.sp
+                    )
+                }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // ★ 強制キャンセルボタン
-                    OutlinedButton(
-                        onClick = onCancelSetup,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
-                        modifier = Modifier.height(36.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                    ) {
-                        Text(text = "キャンセル", fontSize = 12.sp, color = Color(0xFFFF5252))
-                    }
+                ExposedDropdownMenuBox(
+                    expanded = isDropdownExpanded,
+                    onExpandedChange = { onDropdownToggle(!isDropdownExpanded) }
+                ) {
+                    OutlinedTextField(
+                        value = "${selectedExposureSeconds}秒",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("露出時間", color = Color.LightGray, fontSize = 10.sp) },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded)
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF1E88E5),
+                            unfocusedBorderColor = Color.Gray,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent
+                        ),
+                        modifier = Modifier
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                            .width(110.dp)
+                    )
 
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    ExposedDropdownMenuBox(
+                    ExposedDropdownMenu(
                         expanded = isDropdownExpanded,
-                        onExpandedChange = { onDropdownToggle(!isDropdownExpanded) }
+                        onDismissRequest = { onDropdownToggle(false) }
                     ) {
-                        OutlinedTextField(
-                            value = "${selectedExposureSeconds}秒",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("露出時間", color = Color.LightGray, fontSize = 10.sp) },
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded)
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = Color(0xFF1E88E5),
-                                unfocusedBorderColor = Color.Gray,
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent
-                            ),
-                            modifier = Modifier
-                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                                .width(110.dp)
-                        )
-
-                        ExposedDropdownMenu(
-                            expanded = isDropdownExpanded,
-                            onDismissRequest = { onDropdownToggle(false) }
-                        ) {
-                            EXPOSURE_TIMES_SECONDS.forEach { seconds ->
-                                DropdownMenuItem(
-                                    text = { Text("${seconds}秒", color = Color.White) },
-                                    onClick = {
-                                        onExposureChange(seconds)
-                                        onDropdownToggle(false)
-                                    }
-                                )
-                            }
+                        EXPOSURE_TIMES_SECONDS.forEach { seconds ->
+                            DropdownMenuItem(
+                                text = { Text("${seconds}秒", color = Color.White) },
+                                onClick = {
+                                    onExposureChange(seconds)
+                                    onDropdownToggle(false)
+                                }
+                            )
                         }
                     }
                 }
@@ -783,14 +798,34 @@ private fun IntervalTabContent(
     onCancelInterval: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    var totalDragY by remember { mutableFloatStateOf(0f) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // ★ 仕様変更: 上向きスワイプ（Y軸マイナス方向のドラッグ）で撮影キャンセル
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { totalDragY = 0f },
+                    onDragEnd = {
+                        if (totalDragY < -120f) {
+                            onCancelInterval()
+                        }
+                    },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragY += dragAmount
+                    }
+                )
+            }
+    ) {
         // カメラプレビュー
         CameraPreview(
             modifier = Modifier.fillMaxSize(),
             onCameraBound = onCameraBound
         )
 
-        // 上部情報表示 ＆ 強制キャンセルボタン
+        // 上部情報表示
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -818,15 +853,11 @@ private fun IntervalTabContent(
                     )
                 }
 
-                // ★ 強制キャンセルボタン (保存をDisabledにする)
-                OutlinedButton(
-                    onClick = onCancelInterval,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFF5252)),
-                    modifier = Modifier.height(36.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                ) {
-                    Text(text = "撮影キャンセル", fontSize = 12.sp, color = Color(0xFFFF5252))
-                }
+                Text(
+                    text = "↑ 上スワイプでキャンセル",
+                    color = Color(0xFFFF8A80),
+                    fontSize = 11.sp
+                )
             }
         }
 
