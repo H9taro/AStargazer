@@ -229,7 +229,7 @@ private fun MainAppContent() {
         mutableStateOf("露出時間を選択し、開始ボタンを押してください。")
     }
 
-    // 上向きスワイプ等による撮影前設定の強制的キャンセル
+    // 撮影前設定の強制的キャンセル
     fun cancelSetup() {
         isProcessing = false
         isSetupCompleted = false
@@ -240,17 +240,6 @@ private fun MainAppContent() {
         statusMessage = msg
         ttsManager.speak("撮影前設定をキャンセルしました")
         selectedTab = MainMenuTab.SETUP
-    }
-
-    // 上向きスワイプ等によるインターバル撮影の強制的キャンセル
-    fun cancelIntervalShooting() {
-        if (isIntervalShootingActive) {
-            isIntervalShootingActive = false
-        }
-        isIntervalCompleted = false // 「保存」を Disabled に設定
-        val msg = "インターバル撮影をキャンセルしました。「保存」が無効化されました。"
-        statusMessage = msg
-        ttsManager.speak("インターバル撮影をキャンセルしました")
     }
 
     // 単発撮影用サスペンド関数（インターバル撮影の1コマ分）
@@ -412,7 +401,7 @@ private fun MainAppContent() {
                     currentStep = WorkflowStep.SETUP_COMPLETED
                     isSetupCompleted = true // 撮影前設定完了
                     
-                    // ★ 仕様変更: ダークフレーム撮影完了時に自動でヘッダー/画面を「インターバル撮影」へ切り替え
+                    // ダークフレーム撮影完了時に自動でヘッダー/画面を「インターバル撮影」へ切り替え
                     selectedTab = MainMenuTab.INTERVAL
                 }
 
@@ -459,8 +448,6 @@ private fun MainAppContent() {
             WorkflowStep.SETUP_COMPLETED -> {
                 isSetupCompleted = true
                 statusMessage = "撮影前設定が完了しました！インターバル撮影を開始できます。"
-                
-                // ★ 仕様変更: ダークフレーム撮影完了時に「インターバル撮影」へ切り替え
                 selectedTab = MainMenuTab.INTERVAL
             }
         }
@@ -546,7 +533,7 @@ private fun MainAppContent() {
                 }
 
                 MainMenuTab.INTERVAL -> {
-                    // メニュー2: インターバル撮影画面 (上向きスワイプでキャンセル)
+                    // メニュー2: インターバル撮影画面 (シャッターボタンで開始/停止)
                     IntervalTabContent(
                         isIntervalActive = isIntervalShootingActive,
                         shotCount = shotCount,
@@ -554,7 +541,6 @@ private fun MainAppContent() {
                         statusMessage = statusMessage,
                         onStartInterval = { startIntervalShootingLoop() },
                         onStopInterval = { stopIntervalShooting() },
-                        onCancelInterval = { cancelIntervalShooting() },
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
                             imageCaptureInstance = imageCapture
@@ -799,28 +785,10 @@ private fun IntervalTabContent(
     statusMessage: String,
     onStartInterval: () -> Unit,
     onStopInterval: () -> Unit,
-    onCancelInterval: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
-    var totalDragY by remember { mutableFloatStateOf(0f) }
-
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragStart = { totalDragY = 0f },
-                    onDragEnd = {
-                        if (totalDragY < -120f) {
-                            onCancelInterval()
-                        }
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragY += dragAmount
-                    }
-                )
-            }
+        modifier = Modifier.fillMaxSize()
     ) {
         // カメラプレビュー
         CameraPreview(
@@ -836,32 +804,18 @@ private fun IntervalTabContent(
                 .background(Color.Black.copy(alpha = 0.6f))
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text(
-                        text = "AStargazer - インターバル撮影",
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "露出時間: ${selectedExposureSeconds}秒 | 撮影数: ${shotCount}コマ",
-                        color = Color.LightGray,
-                        fontSize = 12.sp
-                    )
-                }
-
-                Text(
-                    text = "↑ 上スワイプでキャンセル",
-                    color = Color(0xFFFF8A80),
-                    fontSize = 11.sp
-                )
-            }
+            Text(
+                text = "AStargazer - インターバル撮影",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "露出時間: ${selectedExposureSeconds}秒 | 撮影数: ${shotCount}コマ",
+                color = Color.LightGray,
+                fontSize = 12.sp
+            )
         }
 
         // 中央〜下部：ステータスメッセージカード
