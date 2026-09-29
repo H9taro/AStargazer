@@ -51,4 +51,31 @@ object StorageHelper {
         val timestamp = System.currentTimeMillis()
         return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, timestamp))
     }
+
+    /**
+     * 比較明合成（Lighten Blend）静止画の保存先ファイル
+     */
+    fun getCompositeImageFile(context: Context): File {
+        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AStargazer/Export")
+        if (!dir.exists()) dir.mkdirs()
+        return File(dir, "Composite_StarTrails_${System.currentTimeMillis()}.jpg")
+    }
+
+    /**
+     * タイムラプス動画（*.mp4）の保存先ファイル
+     */
+    fun getTimelapseVideoFile(context: Context): File {
+        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "AStargazer/Export")
+        if (!dir.exists()) dir.mkdirs()
+        return File(dir, "Timelapse_${System.currentTimeMillis()}.mp4")
+    }
+
+    /**
+     * 保存済みのインターバル撮影写真ファイルの一覧を取得
+     */
+    fun getIntervalImageFiles(context: Context): List<File> {
+        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AStargazer/Interval")
+        if (!dir.exists()) return emptyList()
+        return dir.listFiles { file -> file.extension.lowercase(Locale.JAPAN) == "jpg" }?.sortedBy { it.name } ?: emptyList()
+    }
 }

@@ -39,13 +39,19 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,12 +71,17 @@ import androidx.core.content.ContextCompat
 import com.example.astargazer.ui.camera.CameraControlManager
 import com.example.astargazer.ui.camera.CameraPreview
 import com.example.astargazer.util.BitmapUtils
+import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.StorageHelper
+import com.example.astargazer.util.VideoEncoderHelper
 import com.example.astargazer.util.rememberTtsManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Locale
 import kotlin.coroutines.resume
 
@@ -80,7 +91,16 @@ import kotlin.coroutines.resume
 val EXPOSURE_TIMES_SECONDS = listOf(1, 2, 4, 8, 15, 30)
 
 /**
- * 撮影ワークフローの各ステップ
+ * アプリのメインメニュータブ
+ */
+enum class MainMenuTab(val label: String) {
+    SETUP("撮影前設定"),
+    INTERVAL("インターバル撮影"),
+    SAVE("保存")
+}
+
+/**
+ * 撮影前設定ワークフローの各ステップ
  */
 enum class WorkflowStep {
     EXPOSURE_SETTING,               // 1. 露出時間設定
@@ -88,11 +108,9 @@ enum class WorkflowStep {
     POLARIS_TEST_SHOOTING_ADJUST,   // 3. 試写と自動調整
     TEST_RESULT_DISPLAY,            // 4. 試写結果表示
     DIRECTION_CONFIRM_NOTICE,       // 5. 撮影方向確定案内
-    DARK_FRAME_NOTICE,              // 6a. ダークフレーム撮影案内（カバー装着指示）
+    DARK_FRAME_NOTICE,              // 6a. ダークフレーム撮影案内
     DARK_FRAME_SHOOTING,            // 6b. ダークフレーム撮影実行
-    INTERVAL_SHOOTING_READY,        // 7a. インターバル撮影準備完了
-    INTERVAL_SHOOTING_ACTIVE,       // 7b. インターバル撮影ループ実行中
-    INTERVAL_SHOOTING_FINISHED      // 7c. インターバル撮影完了/停止
+    SETUP_COMPLETED                 // 6c. 撮影前設定完了
 }
 
 @Composable
@@ -127,8 +145,8 @@ fun MainScreen() {
             launcher.launch(Manifest.permission.CAMERA)
         }
     } else {
-        // カメラプレビュー & 操作UI
-        CameraContent()
+        // メインコンテンツ (ボトムメニュー付き)
+        MainAppContent()
     }
 }
 
@@ -174,16 +192,23 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalCamera2Interop::class)
 @Composable
-private fun CameraContent() {
+private fun MainAppContent() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val ttsManager = rememberTtsManager()
+
+    // 現在選択中のメニュータブ
+    var selectedTab by remember { mutableStateOf(MainMenuTab.SETUP) }
+
+    // 設定・撮影完了状態のフラグ
+    var isSetupCompleted by remember { mutableStateOf(false) }
+    var isIntervalCompleted by remember { mutableStateOf(false) }
 
     // カメラ及び UseCase 保持
     var cameraInstance by remember { mutableStateOf<Camera?>(null) }
     var imageCaptureInstance by remember { mutableStateOf<ImageCapture?>(null) }
 
-    // 試写キャプチャ画像と状態
+    // 試写キャプチャ画像と処理状態
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
 
@@ -191,14 +216,14 @@ private fun CameraContent() {
     var isIntervalShootingActive by remember { mutableStateOf(false) }
     var shotCount by remember { mutableIntStateOf(0) }
 
-    // 現在のワークフローステップ
+    // 現在の撮影前設定ステップ
     var currentStep by remember { mutableStateOf(WorkflowStep.EXPOSURE_SETTING) }
 
     // 選択された露出時間 (デフォルト 4秒)
     var selectedExposureSeconds by remember { mutableIntStateOf(4) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
 
-    // 現在のステータスメッセージ
+    // ステータスメッセージ
     var statusMessage by remember {
         mutableStateOf("露出時間を選択し、開始ボタンを押してください。")
     }
@@ -227,7 +252,7 @@ private fun CameraContent() {
         }
     }
 
-    // インターバル撮影ループの開始関数
+    // インターバル撮影ループ関数
     fun startIntervalShootingLoop() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
@@ -235,7 +260,6 @@ private fun CameraContent() {
         }
 
         isIntervalShootingActive = true
-        currentStep = WorkflowStep.INTERVAL_SHOOTING_ACTIVE
         shotCount = 0
 
         coroutineScope.launch {
@@ -244,44 +268,46 @@ private fun CameraContent() {
             ttsManager.speak(startMsg)
 
             while (isIntervalShootingActive) {
-                // 1. ストレージ空き容量チェック (1GB = 1,073,741,824 バイト以下で自動停止)
+                // 1. 容量チェック (1GB以下で即時自動停止)
                 if (!StorageHelper.hasSufficientStorage(context)) {
                     isIntervalShootingActive = false
-                    val stopMsg = "空き容量が1GB以下になったため、インターバル撮影を終了しました。(撮影数: ${shotCount}枚)"
+                    isIntervalCompleted = shotCount > 0
+                    val stopMsg = "空き容量が1GB以下になったため、撮影を自動終了しました。(撮影数: ${shotCount}枚)"
                     statusMessage = stopMsg
                     ttsManager.speak("ストレージ容量制限のため撮影を終了しました")
-                    currentStep = WorkflowStep.INTERVAL_SHOOTING_FINISHED
                     break
                 }
 
                 shotCount++
                 val storageStr = StorageHelper.getFormattedAvailableStorage(context)
-                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 空き容量: ${storageStr}]"
+                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 空き容量: $storageStr]"
 
-                // 2. 露出1コマ分の撮影
+                // 2. 露出1コマ分撮影
                 val success = captureIntervalFrame(imageCapture, shotCount)
-                if (!success) {
+                if (success) {
+                    isIntervalCompleted = true
+                } else {
                     Log.w("MainScreen", "Failed to capture frame $shotCount")
                 }
 
-                // 3. 次のコマまでの短い待機 (コマ間ウェイト 1秒)
+                // 3. 次のコマまでの短い待機 (1秒)
                 delay(1000L)
             }
         }
     }
 
-    // インターバル撮影の停止処理
+    // インターバル撮影停止処理
     fun stopIntervalShooting() {
         if (isIntervalShootingActive) {
             isIntervalShootingActive = false
-            currentStep = WorkflowStep.INTERVAL_SHOOTING_FINISHED
+            if (shotCount > 0) isIntervalCompleted = true
             val msg = "インターバル撮影を停止しました。(合計撮影数: ${shotCount}枚)"
             statusMessage = msg
             ttsManager.speak("インターバル撮影を終了しました")
         }
     }
 
-    // ステップ3: 試写と自動調整の実行関数
+    // 試写と自動調整の実行関数
     fun runTestShootingAndAutoAdjust() {
         val camera = cameraInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -295,7 +321,6 @@ private fun CameraContent() {
         isProcessing = true
         statusMessage = "試写を実行中: ピント(無限遠) & ISO(1600) 自動調整..."
 
-        // 1. マニュアルフォーカス(無限遠: 0.0f) と ISO感度(1600) を設定
         CameraControlManager.setManualFocusAndExposure(
             camera = camera,
             focusDistance = 0.0f,
@@ -303,7 +328,6 @@ private fun CameraContent() {
             exposureTimeNs = selectedExposureSeconds * 1_000_000_000L
         )
 
-        // 2. 試写撮影実行
         val executor = ContextCompat.getMainExecutor(context)
         imageCapture.takePicture(
             executor,
@@ -320,8 +344,6 @@ private fun CameraContent() {
 
                             isProcessing = false
                             statusMessage = "試写調整完了 (コントラストスコア: $scoreFormatted)\n画角を確認してください。"
-
-                            // 自動調整成功後、ステップ4（試写結果表示）へ遷移
                             currentStep = WorkflowStep.TEST_RESULT_DISPLAY
                         } else {
                             isProcessing = false
@@ -339,7 +361,7 @@ private fun CameraContent() {
         )
     }
 
-    // ステップ6: ダークフレーム撮影の実行関数
+    // ダークフレーム撮影実行関数
     fun runDarkFrameShooting() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
@@ -362,7 +384,8 @@ private fun CameraContent() {
                     val message = "ダークフレーム撮影が完了しました。カバーを外してください。"
                     statusMessage = message
                     ttsManager.speak(message)
-                    currentStep = WorkflowStep.INTERVAL_SHOOTING_READY
+                    currentStep = WorkflowStep.SETUP_COMPLETED
+                    isSetupCompleted = true // 撮影前設定が完了！
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -374,8 +397,8 @@ private fun CameraContent() {
         )
     }
 
-    // ステップ変更時の処理（音声読み上げなど）
-    fun updateStep(newStep: WorkflowStep) {
+    // 撮影前設定のステップ変更処理
+    fun updateSetupStep(newStep: WorkflowStep) {
         currentStep = newStep
         when (newStep) {
             WorkflowStep.EXPOSURE_SETTING -> {
@@ -405,41 +428,151 @@ private fun CameraContent() {
             WorkflowStep.DARK_FRAME_SHOOTING -> {
                 runDarkFrameShooting()
             }
-            WorkflowStep.INTERVAL_SHOOTING_READY -> {
-                val storageStr = StorageHelper.getFormattedAvailableStorage(context)
-                statusMessage = "インターバル撮影の準備完了 (空き容量: $storageStr)\nシャッターボタンで開始します。"
-            }
-            WorkflowStep.INTERVAL_SHOOTING_ACTIVE -> {
-                startIntervalShootingLoop()
-            }
-            WorkflowStep.INTERVAL_SHOOTING_FINISHED -> {
-                stopIntervalShooting()
+            WorkflowStep.SETUP_COMPLETED -> {
+                isSetupCompleted = true
+                statusMessage = "撮影前設定が完了しました！メニューから「インターバル撮影」を開始できます。"
             }
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        // バックグラウンド：CameraX プレビュー または 試写画像プレビュー
+    Scaffold(
+        bottomBar = {
+            NavigationBar(
+                containerColor = Color(0xFF121212),
+                contentColor = Color.White
+            ) {
+                MainMenuTab.entries.forEach { tab ->
+                    val enabled = when (tab) {
+                        MainMenuTab.SETUP -> true
+                        MainMenuTab.INTERVAL -> isSetupCompleted
+                        MainMenuTab.SAVE -> isIntervalCompleted || StorageHelper.getIntervalImageFiles(context).isNotEmpty()
+                    }
+
+                    NavigationBarItem(
+                        selected = selectedTab == tab,
+                        enabled = enabled,
+                        onClick = { selectedTab = tab },
+                        label = {
+                            Text(
+                                text = tab.label,
+                                fontSize = 12.sp,
+                                fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        icon = {
+                            // シンプルなステータスアイコンインジケータ
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        when {
+                                            selectedTab == tab -> Color(0xFF1E88E5)
+                                            enabled -> Color.LightGray
+                                            else -> Color.DarkGray
+                                        },
+                                        CircleShape
+                                    )
+                            )
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF1E88E5),
+                            selectedTextColor = Color(0xFF1E88E5),
+                            unselectedIconColor = Color.Gray,
+                            unselectedTextColor = Color.Gray,
+                            disabledIconColor = Color.DarkGray,
+                            disabledTextColor = Color.DarkGray,
+                            indicatorColor = Color(0xFF1E88E5).copy(alpha = 0.2f)
+                        )
+                    )
+                }
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .background(Color.Black)
+        ) {
+            when (selectedTab) {
+                MainMenuTab.SETUP -> {
+                    // メニュー1: 撮影前設定画面
+                    SetupTabContent(
+                        currentStep = currentStep,
+                        capturedTestBitmap = capturedTestBitmap,
+                        selectedExposureSeconds = selectedExposureSeconds,
+                        isDropdownExpanded = isDropdownExpanded,
+                        isProcessing = isProcessing,
+                        statusMessage = statusMessage,
+                        onExposureChange = { selectedExposureSeconds = it },
+                        onDropdownToggle = { isDropdownExpanded = it },
+                        onStepTrigger = { updateSetupStep(it) },
+                        onCameraBound = { camera, imageCapture ->
+                            cameraInstance = camera
+                            imageCaptureInstance = imageCapture
+                        }
+                    )
+                }
+
+                MainMenuTab.INTERVAL -> {
+                    // メニュー2: インターバル撮影画面
+                    IntervalTabContent(
+                        isIntervalActive = isIntervalShootingActive,
+                        shotCount = shotCount,
+                        selectedExposureSeconds = selectedExposureSeconds,
+                        statusMessage = statusMessage,
+                        onStartInterval = { startIntervalShootingLoop() },
+                        onStopInterval = { stopIntervalShooting() },
+                        onCameraBound = { camera, imageCapture ->
+                            cameraInstance = camera
+                            imageCaptureInstance = imageCapture
+                        }
+                    )
+                }
+
+                MainMenuTab.SAVE -> {
+                    // メニュー3: 保存画面（*.mp4 動画 ＆ 比較明合成 *.jpg）
+                    SaveTabContent(
+                        context = context,
+                        coroutineScope = coroutineScope,
+                        ttsManager = ttsManager
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * タブ1: 撮影前設定コンテンツ (ステップ1-6)
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SetupTabContent(
+    currentStep: WorkflowStep,
+    capturedTestBitmap: Bitmap?,
+    selectedExposureSeconds: Int,
+    isDropdownExpanded: Boolean,
+    isProcessing: Boolean,
+    statusMessage: String,
+    onExposureChange: (Int) -> Unit,
+    onDropdownToggle: (Boolean) -> Unit,
+    onStepTrigger: (WorkflowStep) -> Unit,
+    onCameraBound: (Camera, ImageCapture) -> Unit
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // バックグラウンド：CameraX プレビュー または 試写画像
         if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
-            // 試写結果画像を表示 (ステップ4)
             Image(
-                bitmap = capturedTestBitmap!!.asImageBitmap(),
+                bitmap = capturedTestBitmap.asImageBitmap(),
                 contentDescription = "試写結果",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
         } else {
-            // リアルタイムカメラプレビュー
             CameraPreview(
                 modifier = Modifier.fillMaxSize(),
-                onCameraBound = { camera, imageCapture ->
-                    cameraInstance = camera
-                    imageCaptureInstance = imageCapture
-                }
+                onCameraBound = onCameraBound
             )
         }
 
@@ -457,26 +590,20 @@ private fun CameraContent() {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "AStargazer",
+                    text = "AStargazer - 撮影前設定",
                     color = Color.White,
-                    fontSize = 20.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
 
-                // 露出時間ドロップダウン (インターバル撮影実行中は変更不可)
                 ExposedDropdownMenuBox(
-                    expanded = isDropdownExpanded && !isIntervalShootingActive,
-                    onExpandedChange = {
-                        if (!isIntervalShootingActive) {
-                            isDropdownExpanded = !isDropdownExpanded
-                        }
-                    }
+                    expanded = isDropdownExpanded,
+                    onExpandedChange = { onDropdownToggle(!isDropdownExpanded) }
                 ) {
                     OutlinedTextField(
                         value = "${selectedExposureSeconds}秒",
                         onValueChange = {},
                         readOnly = true,
-                        enabled = !isIntervalShootingActive,
                         label = { Text("露出時間", color = Color.LightGray, fontSize = 12.sp) },
                         trailingIcon = {
                             ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded)
@@ -495,15 +622,15 @@ private fun CameraContent() {
                     )
 
                     ExposedDropdownMenu(
-                        expanded = isDropdownExpanded && !isIntervalShootingActive,
-                        onDismissRequest = { isDropdownExpanded = false }
+                        expanded = isDropdownExpanded,
+                        onDismissRequest = { onDropdownToggle(false) }
                     ) {
                         EXPOSURE_TIMES_SECONDS.forEach { seconds ->
                             DropdownMenuItem(
                                 text = { Text("${seconds}秒", color = Color.White) },
                                 onClick = {
-                                    selectedExposureSeconds = seconds
-                                    isDropdownExpanded = false
+                                    onExposureChange(seconds)
+                                    onDropdownToggle(false)
                                 }
                             )
                         }
@@ -556,7 +683,7 @@ private fun CameraContent() {
             )
         }
 
-        // 下部：メイン操作（シャッター/停止）ボタン
+        // 下部：メイン操作（シャッター）ボタン
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -567,54 +694,136 @@ private fun CameraContent() {
             Button(
                 onClick = {
                     when (currentStep) {
-                        WorkflowStep.EXPOSURE_SETTING -> {
-                            updateStep(WorkflowStep.POLARIS_ALIGNMENT_NOTICE)
-                        }
-                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> {
-                            updateStep(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
-                        }
-                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {
-                            // 調整中のため待機
-                        }
-                        WorkflowStep.TEST_RESULT_DISPLAY -> {
-                            updateStep(WorkflowStep.DIRECTION_CONFIRM_NOTICE)
-                        }
-                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
-                            updateStep(WorkflowStep.DARK_FRAME_NOTICE)
-                        }
-                        WorkflowStep.DARK_FRAME_NOTICE -> {
-                            updateStep(WorkflowStep.DARK_FRAME_SHOOTING)
-                        }
-                        WorkflowStep.DARK_FRAME_SHOOTING -> {
-                            // ダークフレーム撮影中のため待機
-                        }
-                        WorkflowStep.INTERVAL_SHOOTING_READY, WorkflowStep.INTERVAL_SHOOTING_FINISHED -> {
-                            // 本番インターバル撮影開始
-                            updateStep(WorkflowStep.INTERVAL_SHOOTING_ACTIVE)
-                        }
-                        WorkflowStep.INTERVAL_SHOOTING_ACTIVE -> {
-                            // インターバル撮影中にボタンを押すと手動停止
-                            updateStep(WorkflowStep.INTERVAL_SHOOTING_FINISHED)
-                        }
+                        WorkflowStep.EXPOSURE_SETTING -> onStepTrigger(WorkflowStep.POLARIS_ALIGNMENT_NOTICE)
+                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> onStepTrigger(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
+                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
+                        WorkflowStep.TEST_RESULT_DISPLAY -> onStepTrigger(WorkflowStep.DIRECTION_CONFIRM_NOTICE)
+                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> onStepTrigger(WorkflowStep.DARK_FRAME_NOTICE)
+                        WorkflowStep.DARK_FRAME_NOTICE -> onStepTrigger(WorkflowStep.DARK_FRAME_SHOOTING)
+                        WorkflowStep.DARK_FRAME_SHOOTING -> {}
+                        WorkflowStep.SETUP_COMPLETED -> onStepTrigger(WorkflowStep.POLARIS_ALIGNMENT_NOTICE)
                     }
                 },
                 enabled = !isProcessing,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isIntervalShootingActive) Color(0xFFD32F2F) else Color.Red
+                    containerColor = Color.Red
                 ),
                 contentPadding = PaddingValues(0.dp)
             ) {
-                if (isIntervalShootingActive) {
-                    // 撮影中は「STOP」アイコン風の四角を表示
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .background(Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .background(Color.Red, CircleShape)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * タブ2: インターバル撮影コンテンツ (ステップ7)
+ */
+@Composable
+private fun IntervalTabContent(
+    isIntervalActive: Boolean,
+    shotCount: Int,
+    selectedExposureSeconds: Int,
+    statusMessage: String,
+    onStartInterval: () -> Unit,
+    onStopInterval: () -> Unit,
+    onCameraBound: (Camera, ImageCapture) -> Unit
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // カメラプレビュー
+        CameraPreview(
+            modifier = Modifier.fillMaxSize(),
+            onCameraBound = onCameraBound
+        )
+
+        // 上部情報表示
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .background(Color.Black.copy(alpha = 0.6f))
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Text(
+                text = "AStargazer - インターバル撮影",
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "露出時間: ${selectedExposureSeconds}秒 | 撮影数: ${shotCount}コマ",
+                color = Color.LightGray,
+                fontSize = 13.sp
+            )
+        }
+
+        // 中央〜下部：ステータスメッセージカード
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 120.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.75f)
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(
+                text = statusMessage,
+                color = Color.White,
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            )
+        }
+
+        // 下部：撮影開始/停止ボタン
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Button(
+                onClick = {
+                    if (isIntervalActive) {
+                        onStopInterval()
+                    } else {
+                        onStartInterval()
+                    }
+                },
+                modifier = Modifier.size(72.dp),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isIntervalActive) Color(0xFFD32F2F) else Color.Red
+                ),
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                if (isIntervalActive) {
                     Box(
                         modifier = Modifier
                             .size(28.dp)
                             .background(Color.White, RoundedCornerShape(4.dp))
                     )
                 } else {
-                    // 通常のシャッターボタン表示
                     Box(
                         modifier = Modifier
                             .size(60.dp)
@@ -628,6 +837,185 @@ private fun CameraContent() {
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * タブ3: 保存コンテンツ（*.mp4 タイムラプス動画 ＆ 比較明合成 *.jpg）
+ */
+@Composable
+private fun SaveTabContent(
+    context: android.content.Context,
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    ttsManager: com.example.astargazer.util.TtsManager
+) {
+    val intervalFiles = remember { StorageHelper.getIntervalImageFiles(context) }
+    var isGenerating by remember { mutableStateOf(false) }
+    var progress by remember { mutableFloatStateOf(0f) }
+    var exportStatusMessage by remember {
+        mutableStateOf(
+            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存するファイル形式を選択してください。"
+            else "保存可能な撮影済み画像がありません。"
+        )
+    }
+
+    // タイムラプス動画（*.mp4）生成
+    fun generateTimelapseVideo() {
+        if (intervalFiles.isEmpty()) return
+        isGenerating = true
+        progress = 0f
+        exportStatusMessage = "タイムラプス動画(*.mp4)を生成中..."
+
+        coroutineScope.launch(Dispatchers.IO) {
+            val outputFile = StorageHelper.getTimelapseVideoFile(context)
+            val success = VideoEncoderHelper.createTimelapseVideo(
+                imageFiles = intervalFiles,
+                outputFile = outputFile,
+                frameRate = 30,
+                onProgress = { p -> progress = p }
+            )
+
+            withContext(Dispatchers.Main) {
+                isGenerating = false
+                if (success) {
+                    val msg = "タイムラプス動画(*.mp4)の生成が完了しました！\n保存先: ${outputFile.name}"
+                    exportStatusMessage = msg
+                    ttsManager.speak("タイムラプス動画の書き出しが完了しました")
+                } else {
+                    exportStatusMessage = "タイムラプス動画の生成に失敗しました。"
+                }
+            }
+        }
+    }
+
+    // 比較明合成（*.jpg）生成
+    fun generateLightenBlendComposite() {
+        if (intervalFiles.isEmpty()) return
+        isGenerating = true
+        progress = 0f
+        exportStatusMessage = "比較明合成静止画(*.jpg)を生成中..."
+
+        coroutineScope.launch(Dispatchers.IO) {
+            val outputFile = StorageHelper.getCompositeImageFile(context)
+            val success = ImageCompositor.createLightenBlendComposite(
+                imageFiles = intervalFiles,
+                outputFile = outputFile,
+                onProgress = { p -> progress = p }
+            )
+
+            withContext(Dispatchers.Main) {
+                isGenerating = false
+                if (success) {
+                    val msg = "比較明合成静止画(*.jpg)の生成が完了しました！\n保存先: ${outputFile.name}"
+                    exportStatusMessage = msg
+                    ttsManager.speak("比較明合成画像の書き出しが完了しました")
+                } else {
+                    exportStatusMessage = "比較明合成画像の生成に失敗しました。"
+                }
+            }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = Color.Black
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = "AStargazer - ファイル保存・出力",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = exportStatusMessage,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center
+                    )
+
+                    if (isGenerating) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Color(0xFF1E88E5),
+                            trackColor = Color.Gray
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "${(progress * 100).toInt()}% 完了",
+                            color = Color.LightGray,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // 1. タイムラプス動画(*.mp4) ボタン
+            Button(
+                onClick = { generateTimelapseVideo() },
+                enabled = !isGenerating && intervalFiles.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1E88E5),
+                    disabledContainerColor = Color.DarkGray
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = "🎬 タイムラプス動画(*.mp4)を出力",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 2. 比較明合成静止画(*.jpg) ボタン
+            Button(
+                onClick = { generateLightenBlendComposite() },
+                enabled = !isGenerating && intervalFiles.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF43A047),
+                    disabledContainerColor = Color.DarkGray
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = "🌌 比較明合成の静止画(*.jpg)を出力",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
         }
     }
