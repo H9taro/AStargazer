@@ -229,7 +229,7 @@ private fun MainAppContent() {
         mutableStateOf("露出時間を選択し、開始ボタンを押してください。")
     }
 
-    // ★ 仕様変更: 上向きスワイプ等による撮影前設定の強制的キャンセル
+    // 上向きスワイプ等による撮影前設定の強制的キャンセル
     fun cancelSetup() {
         isProcessing = false
         isSetupCompleted = false
@@ -242,7 +242,7 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // ★ 仕様変更: 上向きスワイプ等によるインターバル撮影の強制的キャンセル
+    // 上向きスワイプ等によるインターバル撮影の強制的キャンセル
     fun cancelIntervalShooting() {
         if (isIntervalShootingActive) {
             isIntervalShootingActive = false
@@ -411,6 +411,9 @@ private fun MainAppContent() {
                     ttsManager.speak(message)
                     currentStep = WorkflowStep.SETUP_COMPLETED
                     isSetupCompleted = true // 撮影前設定完了
+                    
+                    // ★ 仕様変更: ダークフレーム撮影完了時に自動でヘッダー/画面を「インターバル撮影」へ切り替え
+                    selectedTab = MainMenuTab.INTERVAL
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -455,7 +458,10 @@ private fun MainAppContent() {
             }
             WorkflowStep.SETUP_COMPLETED -> {
                 isSetupCompleted = true
-                statusMessage = "撮影前設定が完了しました！メニューから「インターバル撮影」を開始できます。"
+                statusMessage = "撮影前設定が完了しました！インターバル撮影を開始できます。"
+                
+                // ★ 仕様変更: ダークフレーム撮影完了時に「インターバル撮影」へ切り替え
+                selectedTab = MainMenuTab.INTERVAL
             }
         }
     }
@@ -587,18 +593,16 @@ private fun SetupTabContent(
     onCancelSetup: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
-    // 上向きスワイプジェスチャーの検出用変数の保持
     var totalDragY by remember { mutableFloatStateOf(0f) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // ★ 仕様変更: 上向きスワイプ（Y軸マイナス方向のドラッグ）でキャンセル
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragStart = { totalDragY = 0f },
                     onDragEnd = {
-                        if (totalDragY < -120f) { // 画面上方への一定以上のスワイプを検知
+                        if (totalDragY < -120f) {
                             onCancelSetup()
                         }
                     },
@@ -803,7 +807,6 @@ private fun IntervalTabContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // ★ 仕様変更: 上向きスワイプ（Y軸マイナス方向のドラッグ）で撮影キャンセル
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragStart = { totalDragY = 0f },
