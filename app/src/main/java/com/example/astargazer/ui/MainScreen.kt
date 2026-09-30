@@ -641,25 +641,36 @@ private fun SetupTabContent(
                     )
                 }
 
+                // 露出時間ドロップダウン (ステップ1のみ操作可能)
+                val isExposureChangeable = currentStep == WorkflowStep.EXPOSURE_SETTING
+
                 ExposedDropdownMenuBox(
-                    expanded = isDropdownExpanded,
-                    onExpandedChange = { onDropdownToggle(!isDropdownExpanded) }
+                    expanded = isDropdownExpanded && isExposureChangeable,
+                    onExpandedChange = {
+                        if (isExposureChangeable) {
+                            onDropdownToggle(!isDropdownExpanded)
+                        }
+                    }
                 ) {
                     OutlinedTextField(
                         value = "${selectedExposureSeconds}秒",
                         onValueChange = {},
                         readOnly = true,
+                        enabled = isExposureChangeable,
                         label = { Text("露出時間", color = Color.LightGray, fontSize = 10.sp) },
                         trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded)
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded && isExposureChangeable)
                         },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
+                            disabledTextColor = Color.LightGray,
                             focusedBorderColor = Color(0xFF1E88E5),
                             unfocusedBorderColor = Color.Gray,
+                            disabledBorderColor = Color.DarkGray,
                             focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent
                         ),
                         modifier = Modifier
                             .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
@@ -667,7 +678,7 @@ private fun SetupTabContent(
                     )
 
                     ExposedDropdownMenu(
-                        expanded = isDropdownExpanded,
+                        expanded = isDropdownExpanded && isExposureChangeable,
                         onDismissRequest = { onDropdownToggle(false) }
                     ) {
                         EXPOSURE_TIMES_SECONDS.forEach { seconds ->
