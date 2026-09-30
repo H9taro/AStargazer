@@ -305,7 +305,7 @@ private fun MainAppContent() {
                 val storageStr = StorageHelper.getFormattedAvailableStorage(context)
                 statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残り撮影可能: 約${remainingShots}枚 / 残容量: $storageStr]"
 
-                // 3. 露出1コマ分撮影
+                // 3. 露出1コマ分撮影 (露出 + JPEGエンコード・ファイル保存)
                 val success = captureIntervalFrame(imageCapture, shotCount)
                 if (success) {
                     isIntervalCompleted = true
@@ -313,8 +313,8 @@ private fun MainAppContent() {
                     Log.w("MainScreen", "Failed to capture frame $shotCount")
                 }
 
-                // 4. 次のコマまでの短い待機 (1秒)
-                delay(1000L)
+                // ★ 改善: 余分な1秒ウェイトを廃止し、露出完了後すぐに次のコマの撮影へ移行 (コマ間ギャップを最小化)
+                delay(100L)
             }
         }
     }
