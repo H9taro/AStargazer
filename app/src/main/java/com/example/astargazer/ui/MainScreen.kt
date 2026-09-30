@@ -901,6 +901,7 @@ private fun SaveTabContent(
     val intervalFiles = remember { StorageHelper.getIntervalImageFiles(context) }
     var isGenerating by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
+    var lastExportedFile by remember { mutableStateOf<java.io.File?>(null) }
     var exportStatusMessage by remember {
         mutableStateOf(
             if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存するファイル形式を選択してください。"
@@ -927,9 +928,12 @@ private fun SaveTabContent(
             withContext(Dispatchers.Main) {
                 isGenerating = false
                 if (success) {
+                    lastExportedFile = outputFile
                     val msg = "タイムラプス動画(*.mp4)の生成が完了しました！\n保存先: ${outputFile.name}"
                     exportStatusMessage = msg
                     ttsManager.speak("タイムラプス動画の書き出しが完了しました")
+                    // 自動で Google Files / ビューアを開いて表示
+                    com.example.astargazer.util.FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
                 } else {
                     exportStatusMessage = "タイムラプス動画の生成に失敗しました。"
                 }
@@ -955,9 +959,12 @@ private fun SaveTabContent(
             withContext(Dispatchers.Main) {
                 isGenerating = false
                 if (success) {
+                    lastExportedFile = outputFile
                     val msg = "比較明合成静止画(*.jpg)の生成が完了しました！\n保存先: ${outputFile.name}"
                     exportStatusMessage = msg
                     ttsManager.speak("比較明合成画像の書き出しが完了しました")
+                    // 自動で Google Files / ビューアを開いて表示
+                    com.example.astargazer.util.FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
                 } else {
                     exportStatusMessage = "比較明合成画像の生成に失敗しました。"
                 }
@@ -1019,7 +1026,7 @@ private fun SaveTabContent(
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // 1. タイムラプス動画(*.mp4) ボタン
             Button(
@@ -1042,7 +1049,7 @@ private fun SaveTabContent(
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // 2. 比較明合成静止画(*.jpg) ボタン
             Button(
@@ -1063,6 +1070,30 @@ private fun SaveTabContent(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium
                 )
+            }
+
+            // 保存完了ファイルがある場合に「Google Filesで開く」ボタンを表示
+            if (lastExportedFile != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        com.example.astargazer.util.FileViewerHelper.openInGoogleFilesOrViewer(context, lastExportedFile!!)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFF9800)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = "📁 Google Filesで保存ファイルを開く",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
