@@ -357,8 +357,12 @@ private fun MainAppContent() {
                             val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
 
                             isProcessing = false
-                            statusMessage = "試写調整完了 (コントラストスコア: $scoreFormatted)\n画角を確認してください。"
-                            currentStep = WorkflowStep.TEST_RESULT_DISPLAY
+                            
+                            // ★ 仕様変更: 試写調整完了と同時に自動でダークフレーム撮影案内へ直接移行
+                            val message = "試写調整完了 (スコア: $scoreFormatted)。レンズ（カメラ）を覆った状態でシャッターを押してください。"
+                            statusMessage = message
+                            currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                            ttsManager.speak("試写調整が完了しました。レンズを覆って、シャッターを押してください")
                         } else {
                             isProcessing = false
                             statusMessage = "試写画像の取得に失敗しました。"
