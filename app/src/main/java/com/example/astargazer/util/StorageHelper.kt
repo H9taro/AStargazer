@@ -5,8 +5,12 @@ import android.os.Environment
 import android.os.StatFs
 import java.io.File
 import java.util.Locale
+import kotlin.math.max
 
 object StorageHelper {
+
+    // 1コマ（静止画1枚）あたりの推定ファイルサイズ (約5MB)
+    const val ESTIMATED_BYTES_PER_FRAME = 5 * 1024 * 1024L
 
     /**
      * 利用可能な空きストレージ容量をバイト単位で取得
@@ -24,6 +28,15 @@ object StorageHelper {
         val bytes = getAvailableStorageBytes(context)
         val gb = bytes / (1024.0 * 1024.0 * 1024.0)
         return String.format(Locale.JAPAN, "%.2f GB", gb)
+    }
+
+    /**
+     * 現在の空き容量と下限閾値から残り撮影可能推定枚数を計算
+     */
+    fun calculateRemainingShots(currentStorageBytes: Long, minAllowedStorageBytes: Long): Int {
+        val availableForShooting = currentStorageBytes - minAllowedStorageBytes
+        if (availableForShooting <= 0) return 0
+        return (availableForShooting / ESTIMATED_BYTES_PER_FRAME).toInt()
     }
 
     /**

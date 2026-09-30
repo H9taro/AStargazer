@@ -273,30 +273,39 @@ private fun MainAppContent() {
             return
         }
 
+        // ★ 仕様変更: 撮影開始時点の空き容量の50%を撮影可能上限（下限閾値）として設定
+        val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
+        val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
+
         isIntervalShootingActive = true
         shotCount = 0
 
         coroutineScope.launch {
-            val startMsg = "インターバル撮影を開始しました。"
+            val startMsg = "インターバル撮影を開始しました。(撮影上限: 空き容量の50%)"
             statusMessage = startMsg
             ttsManager.speak(startMsg)
 
             while (isIntervalShootingActive) {
-                // 1. 容量チェック (1GB以下で即時自動停止)
-                if (!StorageHelper.hasSufficientStorage(context)) {
+                val currentStorageBytes = StorageHelper.getAvailableStorageBytes(context)
+
+                // 1. 容量チェック (空き容量の50%に達したら自動停止)
+                if (currentStorageBytes <= minAllowedStorageBytes) {
                     isIntervalShootingActive = false
                     isIntervalCompleted = shotCount > 0
-                    val stopMsg = "空き容量が1GB以下になったため、撮影を自動終了しました。(撮影数: ${shotCount}枚)"
+                    val stopMsg = "空き容量の50%に達したため、撮影を自動終了しました。(合計: ${shotCount}枚)"
                     statusMessage = stopMsg
-                    ttsManager.speak("ストレージ容量制限のため撮影を終了しました")
+                    ttsManager.speak("撮影上限容量に達したためインターバル撮影を終了しました")
                     break
                 }
 
                 shotCount++
-                val storageStr = StorageHelper.getFormattedAvailableStorage(context)
-                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 空き容量: $storageStr]"
 
-                // 2. 露出1コマ分撮影
+                // 2. 残り撮影可能枚数の計算
+                val remainingShots = StorageHelper.calculateRemainingShots(currentStorageBytes, minAllowedStorageBytes)
+                val storageStr = StorageHelper.getFormattedAvailableStorage(context)
+                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残り撮影可能: 約${remainingShots}枚 / 残容量: $storageStr]"
+
+                // 3. 露出1コマ分撮影
                 val success = captureIntervalFrame(imageCapture, shotCount)
                 if (success) {
                     isIntervalCompleted = true
@@ -304,7 +313,7 @@ private fun MainAppContent() {
                     Log.w("MainScreen", "Failed to capture frame $shotCount")
                 }
 
-                // 3. 次のコマまでの短い待機 (1秒)
+                // 4. 次のコマまでの短い待機 (1秒)
                 delay(1000L)
             }
         }
