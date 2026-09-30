@@ -11,7 +11,7 @@ import java.io.File
 object FileViewerHelper {
 
     /**
-     * 作成したファイルを MediaScanner に登録
+     * 作成したファイルを MediaScanner に登録（ギャラリーやGoogleフォトで即時に認識させる）
      */
     fun scanFile(context: Context, file: File, onScanned: ((Uri?) -> Unit)? = null) {
         MediaScannerConnection.scanFile(
@@ -25,7 +25,7 @@ object FileViewerHelper {
     }
 
     /**
-     * 保存されたファイルを Google Files (または標準ファイルアプリ/ギャラリー) で開いて表示
+     * 保存されたファイルを Google Files や標準ギャラリーで開いて表示
      */
     fun openInGoogleFilesOrViewer(context: Context, file: File) {
         scanFile(context, file) { scannedUri ->
@@ -41,7 +41,7 @@ object FileViewerHelper {
                 else -> "*/*"
             }
 
-            // 1. Google Files アプリ (com.google.android.apps.nfile) で直接表示
+            // 1. Google Files アプリ (com.google.android.apps.nfile) で表示
             val googleFilesIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(contentUri, mimeType)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -56,7 +56,7 @@ object FileViewerHelper {
                 Log.w("FileViewerHelper", "Google Files package not found, falling back to general chooser", e)
             }
 
-            // 2. フォールバック: 標準ファイルアプリ / ギャラリー表示
+            // 2. フォールバック: ギャラリー / 一般的なメディアビューアで表示
             val generalIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(contentUri, mimeType)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

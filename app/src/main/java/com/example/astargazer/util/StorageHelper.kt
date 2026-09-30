@@ -53,19 +53,21 @@ object StorageHelper {
     }
 
     /**
-     * 比較明合成（Lighten Blend）静止画の保存先ファイル
+     * 比較明合成（Lighten Blend）静止画の保存先ファイル（パブリック Pictures/AStargazer フォルダ）
      */
     fun getCompositeImageFile(context: Context): File {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AStargazer/Export")
+        val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val dir = File(publicDir, "AStargazer")
         if (!dir.exists()) dir.mkdirs()
         return File(dir, "Composite_StarTrails_${System.currentTimeMillis()}.jpg")
     }
 
     /**
-     * タイムラプス動画（*.mp4）の保存先ファイル
+     * タイムラプス動画（*.mp4）の保存先ファイル（パブリック Movies/AStargazer フォルダ）
      */
     fun getTimelapseVideoFile(context: Context): File {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "AStargazer/Export")
+        val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+        val dir = File(publicDir, "AStargazer")
         if (!dir.exists()) dir.mkdirs()
         return File(dir, "Timelapse_${System.currentTimeMillis()}.mp4")
     }
