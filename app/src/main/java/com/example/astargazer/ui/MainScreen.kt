@@ -332,13 +332,16 @@ private fun MainAppContent() {
             return
         }
 
+        // ★ 仕様変更: 選択された露出時間から最適ISO感度を自動算出
+        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+
         isProcessing = true
-        statusMessage = "試写を実行中: ピント(無限遠) & ISO(1600) 自動調整..."
+        statusMessage = "試写を実行中: ピント(無限遠) & ISO($optimalIso) 自動調整..."
 
         CameraControlManager.setManualFocusAndExposure(
             camera = camera,
             focusDistance = 0.0f,
-            iso = 1600,
+            iso = optimalIso,
             exposureTimeNs = selectedExposureSeconds * 1_000_000_000L
         )
 
@@ -358,8 +361,7 @@ private fun MainAppContent() {
 
                             isProcessing = false
                             
-                            // ★ 仕様変更: 試写調整完了と同時に自動でダークフレーム撮影案内へ直接移行
-                            val message = "試写調整完了 (スコア: $scoreFormatted)。レンズ（カメラ）を覆った状態でシャッターを押してください。"
+                            val message = "試写調整完了 (ISO: $optimalIso, スコア: $scoreFormatted)。レンズ（カメラ）を覆った状態でシャッターを押してください。"
                             statusMessage = message
                             currentStep = WorkflowStep.DARK_FRAME_NOTICE
                             ttsManager.speak("試写調整が完了しました。レンズを覆って、シャッターを押してください")

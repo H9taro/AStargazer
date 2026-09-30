@@ -11,6 +11,22 @@ import androidx.camera.core.Camera
 object CameraControlManager {
 
     /**
+     * 選択された露出時間(秒)から適正なISO感度を自動算出
+     * 露出時間が長ければISO感度を下げ、ノイズを抑制しつつ露出(EV)を適正に保つ
+     */
+    fun calculateOptimalIsoForExposure(exposureSeconds: Int): Int {
+        return when {
+            exposureSeconds <= 1 -> 3200
+            exposureSeconds <= 2 -> 3200
+            exposureSeconds <= 4 -> 1600
+            exposureSeconds <= 8 -> 800
+            exposureSeconds <= 15 -> 800
+            exposureSeconds <= 30 -> 400
+            else -> 200
+        }
+    }
+
+    /**
      * カメラのピント(Focus Distance)とISO感度、露出時間を手動設定
      * @param camera CameraXのCameraインスタンス
      * @param focusDistance 0.0f = 無限遠(Far), 値が大きくなるほど至近距離(Near)
