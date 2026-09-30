@@ -469,7 +469,13 @@ private fun MainAppContent() {
                     NavigationBarItem(
                         selected = selectedTab == tab,
                         enabled = enabled,
-                        onClick = { selectedTab = tab },
+                        onClick = {
+                            selectedTab = tab
+                            if (tab == MainMenuTab.SETUP) {
+                                // ★ 仕様変更: メニューで撮影前設定を選択した場合、初期ステップに戻してドロップダウンのロックを解除
+                                currentStep = WorkflowStep.EXPOSURE_SETTING
+                            }
+                        },
                         label = {
                             Text(
                                 text = tab.label,
