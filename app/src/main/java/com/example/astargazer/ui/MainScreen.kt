@@ -759,7 +759,8 @@ private fun SetupTabContent(
                         WorkflowStep.EXPOSURE_SETTING -> onStepTrigger(WorkflowStep.POLARIS_ALIGNMENT_NOTICE)
                         WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> onStepTrigger(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
                         WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
-                        WorkflowStep.TEST_RESULT_DISPLAY -> onStepTrigger(WorkflowStep.DIRECTION_CONFIRM_NOTICE)
+                        // ★ 仕様変更: 試写結果確認後は直接ダークフレーム撮影案内へ進む
+                        WorkflowStep.TEST_RESULT_DISPLAY -> onStepTrigger(WorkflowStep.DARK_FRAME_NOTICE)
                         WorkflowStep.DIRECTION_CONFIRM_NOTICE -> onStepTrigger(WorkflowStep.DARK_FRAME_NOTICE)
                         WorkflowStep.DARK_FRAME_NOTICE -> onStepTrigger(WorkflowStep.DARK_FRAME_SHOOTING)
                         WorkflowStep.DARK_FRAME_SHOOTING -> {}
