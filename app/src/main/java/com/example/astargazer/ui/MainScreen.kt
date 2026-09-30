@@ -423,7 +423,10 @@ private fun MainAppContent() {
         currentStep = newStep
         when (newStep) {
             WorkflowStep.EXPOSURE_SETTING -> {
-                statusMessage = "露出時間を選択し、開始ボタンを押してください。"
+                // ★ 提案1適用: 露出時間設定と北極星合わせの案内を最初から統合
+                val message = "露出時間を選択し、北極星に合わせてシャッターを押してください。"
+                statusMessage = message
+                ttsManager.speak("北極星に合わせてシャッターを押してください")
             }
             WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> {
                 val message = "北極星に合わせてシャッターを押してください"
@@ -760,15 +763,15 @@ private fun SetupTabContent(
             Button(
                 onClick = {
                     when (currentStep) {
-                        WorkflowStep.EXPOSURE_SETTING -> onStepTrigger(WorkflowStep.POLARIS_ALIGNMENT_NOTICE)
+                        // ★ 提案1適用: 初回シャッター押下で直接試写＆自動調整へ進む (シャッター1回分削減)
+                        WorkflowStep.EXPOSURE_SETTING -> onStepTrigger(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
                         WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> onStepTrigger(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
                         WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
-                        // ★ 仕様変更: 試写結果確認後は直接ダークフレーム撮影案内へ進む
                         WorkflowStep.TEST_RESULT_DISPLAY -> onStepTrigger(WorkflowStep.DARK_FRAME_NOTICE)
                         WorkflowStep.DIRECTION_CONFIRM_NOTICE -> onStepTrigger(WorkflowStep.DARK_FRAME_NOTICE)
                         WorkflowStep.DARK_FRAME_NOTICE -> onStepTrigger(WorkflowStep.DARK_FRAME_SHOOTING)
                         WorkflowStep.DARK_FRAME_SHOOTING -> {}
-                        WorkflowStep.SETUP_COMPLETED -> onStepTrigger(WorkflowStep.POLARIS_ALIGNMENT_NOTICE)
+                        WorkflowStep.SETUP_COMPLETED -> onStepTrigger(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
                     }
                 },
                 enabled = !isProcessing,
