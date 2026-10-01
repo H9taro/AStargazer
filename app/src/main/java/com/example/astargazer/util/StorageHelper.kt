@@ -5,7 +5,6 @@ import android.os.Environment
 import android.os.StatFs
 import java.io.File
 import java.util.Locale
-import kotlin.math.max
 
 object StorageHelper {
 
@@ -13,10 +12,24 @@ object StorageHelper {
     const val ESTIMATED_BYTES_PER_FRAME = 5 * 1024 * 1024L
 
     /**
+     * パブリックの Pictures/AStargazer ディレクトリを取得
+     */
+    fun getPublicAStargazerDir(subDirName: String = ""): File {
+        val publicPictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val dir = if (subDirName.isEmpty()) {
+            File(publicPictures, "AStargazer")
+        } else {
+            File(publicPictures, "AStargazer/$subDirName")
+        }
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    /**
      * 利用可能な空きストレージ容量をバイト単位で取得
      */
     fun getAvailableStorageBytes(context: Context): Long {
-        val path = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir
+        val path = getPublicAStargazerDir()
         val stat = StatFs(path.path)
         return stat.availableBlocksLong * stat.blockSizeLong
     }
@@ -47,40 +60,44 @@ object StorageHelper {
     }
 
     /**
-     * ダークフレーム保存用ファイルの取得
+     * 試写調整画像の保存先ファイル (パブリック Pictures/AStargazer/TestShooting/)
      */
-    fun getDarkFrameFile(context: Context): File {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AStargazer")
-        if (!dir.exists()) dir.mkdirs()
+    fun getTestShootingFile(): File {
+        val dir = getPublicAStargazerDir("TestShooting")
+        return File(dir, "Test_${System.currentTimeMillis()}.jpg")
+    }
+
+    /**
+     * ダークフレーム保存用ファイルの取得 (パブリック Pictures/AStargazer/DarkFrame/)
+     */
+    fun getDarkFrameFile(context: Context? = null): File {
+        val dir = getPublicAStargazerDir("DarkFrame")
         return File(dir, "dark_frame.jpg")
     }
 
     /**
-     * インターバル撮影写真の保存先ファイルの生成
+     * インターバル撮影写真の保存先ファイルの生成 (パブリック Pictures/AStargazer/Interval/)
      */
-    fun createIntervalImageFile(context: Context, index: Int): File {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AStargazer/Interval")
-        if (!dir.exists()) dir.mkdirs()
+    fun createIntervalImageFile(context: Context? = null, index: Int): File {
+        val dir = getPublicAStargazerDir("Interval")
         val timestamp = System.currentTimeMillis()
         return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, timestamp))
     }
 
     /**
-     * 比較明合成（Lighten Blend）静止画の保存先ファイル（パブリック Pictures/AStargazer フォルダ）
+     * 比較明合成（Lighten Blend）静止画の保存先ファイル (パブリック Pictures/AStargazer/Export/)
      */
-    fun getCompositeImageFile(context: Context): File {
-        val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-        val dir = File(publicDir, "AStargazer")
-        if (!dir.exists()) dir.mkdirs()
+    fun getCompositeImageFile(context: Context? = null): File {
+        val dir = getPublicAStargazerDir("Export")
         return File(dir, "Composite_StarTrails_${System.currentTimeMillis()}.jpg")
     }
 
     /**
-     * タイムラプス動画（*.mp4）の保存先ファイル（パブリック Movies/AStargazer フォルダ）
+     * タイムラプス動画（*.mp4）の保存先ファイル (パブリック Movies/AStargazer/Export/)
      */
-    fun getTimelapseVideoFile(context: Context): File {
-        val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-        val dir = File(publicDir, "AStargazer")
+    fun getTimelapseVideoFile(context: Context? = null): File {
+        val publicMovies = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+        val dir = File(publicMovies, "AStargazer/Export")
         if (!dir.exists()) dir.mkdirs()
         return File(dir, "Timelapse_${System.currentTimeMillis()}.mp4")
     }
@@ -88,8 +105,8 @@ object StorageHelper {
     /**
      * 保存済みのインターバル撮影写真ファイルの一覧を取得
      */
-    fun getIntervalImageFiles(context: Context): List<File> {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "AStargazer/Interval")
+    fun getIntervalImageFiles(context: Context? = null): List<File> {
+        val dir = getPublicAStargazerDir("Interval")
         if (!dir.exists()) return emptyList()
         return dir.listFiles { file -> file.extension.lowercase(Locale.JAPAN) == "jpg" }?.sortedBy { it.name } ?: emptyList()
     }

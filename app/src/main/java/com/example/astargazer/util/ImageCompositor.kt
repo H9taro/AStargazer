@@ -5,7 +5,6 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
-import kotlin.math.max
 
 object ImageCompositor {
 
@@ -24,55 +23,57 @@ object ImageCompositor {
         if (imageFiles.isEmpty()) return false
 
         try {
-            // 1. 最初の画像サイズを取得
-            val firstBitmap = BitmapFactory.decodeFile(imageFiles[0].absolutePath) ?: return false
-            val width = firstBitmap.width
-            val height = firstBitmap.height
+            val options = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.ARGB_8888 }
+            val baseBitmap = BitmapFactory.decodeFile(imageFiles[0].absolutePath, options) ?: return false
+            val width = baseBitmap.width
+            val height = baseBitmap.height
 
-            val compositePixels = IntArray(width * height)
-            firstBitmap.getPixels(compositePixels, 0, width, 0, 0, width, height)
-            firstBitmap.recycle()
+            val basePixels = IntArray(width * height)
+            baseBitmap.getPixels(basePixels, 0, width, 0, 0, width, height)
+            baseBitmap.recycle()
 
-            val tempPixels = IntArray(width * height)
+            val nextPixels = IntArray(width * height)
 
-            // 2. 順次比較明（Lighten Blend）処理
             for (index in 1 until imageFiles.size) {
                 val file = imageFiles[index]
-                val bitmap = BitmapFactory.decodeFile(file.absolutePath)
-                if (bitmap != null) {
-                    bitmap.getPixels(tempPixels, 0, width, 0, 0, width, height)
-                    bitmap.recycle()
+                val nextBitmap = BitmapFactory.decodeFile(file.absolutePath, options)
+                if (nextBitmap != null) {
+                    nextBitmap.getPixels(nextPixels, 0, width, 0, 0, width, height)
+                    nextBitmap.recycle()
 
-                    for (i in compositePixels.indices) {
-                        val p1 = compositePixels[i]
-                        val p2 = tempPixels[i]
+                    for (i in basePixels.indices) {
+                        val p1 = basePixels[i]
+                        val p2 = nextPixels[i]
 
-                        val r1 = (p1 shr 16) and 0xFF
-                        val g1 = (p1 shr 8) and 0xFF
+                        val a1 = (p1 ushr 24) and 0xFF
+                        val r1 = (p1 ushr 16) and 0xFF
+                        val g1 = (p1 ushr 8) and 0xFF
                         val b1 = p1 and 0xFF
 
-                        val r2 = (p2 shr 16) and 0xFF
-                        val g2 = (p2 shr 8) and 0xFF
+                        val r2 = (p2 ushr 16) and 0xFF
+                        val g2 = (p2 ushr 8) and 0xFF
                         val b2 = p2 and 0xFF
 
-                        val r = max(r1, r2)
-                        val g = max(g1, g2)
-                        val b = max(b1, b2)
+                        val rMax = if (r1 > r2) r1 else r2
+                        val gMax = if (g1 > g2) g1 else g2
+                        val bMax = if (b1 > b2) b1 else b2
+                        val aMax = if (a1 == 0) 0xFF else a1
 
-                        compositePixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                        basePixels[i] = (aMax shl 24) or (rMax shl 16) or (gMax shl 8) or bMax
                     }
                 }
                 onProgress((index + 1).toFloat() / imageFiles.size)
             }
 
-            // 3. 合成結果ビットマップを作成してファイル保存
-            val resultBitmap = Bitmap.createBitmap(compositePixels, width, height, Bitmap.Config.ARGB_8888)
+            val resultBitmap = Bitmap.createBitmap(basePixels, width, height, Bitmap.Config.ARGB_8888)
+
+            outputFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
             FileOutputStream(outputFile).use { out ->
                 resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
             resultBitmap.recycle()
 
-            Log.d("ImageCompositor", "Lighten blend composite created at ${outputFile.absolutePath}")
+            Log.d("ImageCompositor", "Lighten blend composite successfully created at ${outputFile.absolutePath}")
             return true
         } catch (e: Exception) {
             Log.e("ImageCompositor", "Failed to create lighten blend composite", e)
