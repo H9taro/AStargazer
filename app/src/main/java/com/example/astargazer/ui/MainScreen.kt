@@ -52,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -89,9 +90,20 @@ import java.util.Locale
 import kotlin.coroutines.resume
 
 /**
- * 露出時間の選択肢（秒数）
+ * 露出時間の選択肢（秒数: 0.25秒, 0.5秒, 1秒, 2秒, 4秒, 8秒, 15秒, 30秒）
  */
-val EXPOSURE_TIMES_SECONDS = listOf(1, 2, 4, 8, 15, 30)
+val EXPOSURE_TIMES_SECONDS = listOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
+
+/**
+ * 露出時間のフォーマット（整数の場合は "1秒", 小数の場合は "0.25秒" など）
+ */
+fun formatExposureSeconds(seconds: Double): String {
+    return if (seconds % 1.0 == 0.0) {
+        "${seconds.toInt()}秒"
+    } else {
+        "${seconds}秒"
+    }
+}
 
 /**
  * アプリのメインメニュータブ
@@ -222,8 +234,8 @@ private fun MainAppContent() {
     // 現在の撮影前設定ステップ
     var currentStep by remember { mutableStateOf(WorkflowStep.EXPOSURE_SETTING) }
 
-    // 選択された露出時間 (デフォルト 4秒)
-    var selectedExposureSeconds by remember { mutableIntStateOf(4) }
+    // 選択された露出時間 (デフォルト 4.0秒)
+    var selectedExposureSeconds by remember { mutableDoubleStateOf(4.0) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
 
     // ステータスメッセージ
@@ -349,7 +361,7 @@ private fun MainAppContent() {
             camera = camera,
             focusDistance = 0.0f,
             iso = optimalIso,
-            exposureTimeNs = selectedExposureSeconds * 1_000_000_000L
+            exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
         )
 
         val executor = ContextCompat.getMainExecutor(context)
@@ -388,7 +400,7 @@ private fun MainAppContent() {
                                     camera = camera,
                                     focusDistance = 0.0f,
                                     iso = adjustedIso,
-                                    exposureTimeNs = selectedExposureSeconds * 1_000_000_000L
+                                    exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
                                 )
                             }
 
@@ -423,7 +435,7 @@ private fun MainAppContent() {
         }
 
         isProcessing = true
-        statusMessage = "ダークフレーム撮影中 (${selectedExposureSeconds}秒)..."
+        statusMessage = "ダークフレーム撮影中 (${formatExposureSeconds(selectedExposureSeconds)})..."
 
         val darkFrameFile = StorageHelper.getDarkFrameFile(context)
         val outputOptions = ImageCapture.OutputFileOptions.Builder(darkFrameFile).build()
@@ -614,11 +626,11 @@ private fun MainAppContent() {
 private fun SetupTabContent(
     currentStep: WorkflowStep,
     capturedTestBitmap: Bitmap?,
-    selectedExposureSeconds: Int,
+    selectedExposureSeconds: Double,
     isDropdownExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
-    onExposureChange: (Int) -> Unit,
+    onExposureChange: (Double) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
     onStepTrigger: (WorkflowStep) -> Unit,
     onCancelSetup: () -> Unit,
@@ -695,7 +707,7 @@ private fun SetupTabContent(
                     }
                 ) {
                     OutlinedTextField(
-                        value = "${selectedExposureSeconds}秒",
+                        value = formatExposureSeconds(selectedExposureSeconds),
                         onValueChange = {},
                         readOnly = true,
                         enabled = isExposureChangeable,
@@ -725,7 +737,7 @@ private fun SetupTabContent(
                     ) {
                         EXPOSURE_TIMES_SECONDS.forEach { seconds ->
                             DropdownMenuItem(
-                                text = { Text("${seconds}秒", color = Color.White) },
+                                text = { Text(formatExposureSeconds(seconds), color = Color.White) },
                                 onClick = {
                                     onExposureChange(seconds)
                                     onDropdownToggle(false)
@@ -831,7 +843,7 @@ private fun SetupTabContent(
 private fun IntervalTabContent(
     isIntervalActive: Boolean,
     shotCount: Int,
-    selectedExposureSeconds: Int,
+    selectedExposureSeconds: Double,
     statusMessage: String,
     onStartInterval: () -> Unit,
     onStopInterval: () -> Unit,
@@ -860,7 +872,7 @@ private fun IntervalTabContent(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "露出時間: ${selectedExposureSeconds}秒 | 撮影数: ${shotCount}コマ",
+                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 撮影数: ${shotCount}コマ",
                 color = Color.LightGray,
                 fontSize = 12.sp
             )

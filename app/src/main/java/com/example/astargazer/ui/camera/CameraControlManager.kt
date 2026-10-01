@@ -14,14 +14,16 @@ object CameraControlManager {
      * 選択された露出時間(秒)から適正なISO感度を自動算出
      * 露出時間が長ければISO感度を下げ、ノイズを抑制しつつ露出(EV)を適正に保つ
      */
-    fun calculateOptimalIsoForExposure(exposureSeconds: Int): Int {
+    fun calculateOptimalIsoForExposure(exposureSeconds: Double): Int {
         return when {
-            exposureSeconds <= 1 -> 3200
-            exposureSeconds <= 2 -> 3200
-            exposureSeconds <= 4 -> 1600
-            exposureSeconds <= 8 -> 800
-            exposureSeconds <= 15 -> 800
-            exposureSeconds <= 30 -> 400
+            exposureSeconds <= 0.25 -> 3200
+            exposureSeconds <= 0.5 -> 3200
+            exposureSeconds <= 1.0 -> 3200
+            exposureSeconds <= 2.0 -> 3200
+            exposureSeconds <= 4.0 -> 1600
+            exposureSeconds <= 8.0 -> 800
+            exposureSeconds <= 15.0 -> 800
+            exposureSeconds <= 30.0 -> 400
             else -> 200
         }
     }
