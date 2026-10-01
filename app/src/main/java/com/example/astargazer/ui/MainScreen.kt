@@ -378,9 +378,24 @@ private fun MainAppContent() {
                             val score = ImageContrastAnalyzer.calculateContrastScore(bitmap)
                             val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
 
+                            // ★ 仕様変更: 試写画像の平均輝度（白飛び率）を自動解析し、ISO感度を自動引き下げアジャスト
+                            val avgLuminance = ImageContrastAnalyzer.calculateAverageLuminance(bitmap)
+                            val adjustedIso = ImageContrastAnalyzer.adjustIsoForLuminance(optimalIso, avgLuminance)
+
+                            // 白飛び補正でISO感が更新された場合、カメラに即時適用
+                            if (adjustedIso != optimalIso) {
+                                CameraControlManager.setManualFocusAndExposure(
+                                    camera = camera,
+                                    focusDistance = 0.0f,
+                                    iso = adjustedIso,
+                                    exposureTimeNs = selectedExposureSeconds * 1_000_000_000L
+                                )
+                            }
+
                             isProcessing = false
 
-                            val message = "試写調整完了 (ISO: $optimalIso, スコア: $scoreFormatted)。レンズ（カメラ）を覆った状態でシャッターを押してください。"
+                            val statusNotice = if (adjustedIso < optimalIso) "白飛び補正: ISO $adjustedIso" else "ISO $optimalIso"
+                            val message = "試写調整完了 ($statusNotice, スコア: $scoreFormatted)。レンズ（カメラ）を覆った状態でシャッターを押してください。"
                             statusMessage = message
                             currentStep = WorkflowStep.DARK_FRAME_NOTICE
                             ttsManager.speak("試写調整が完了しました。レンズを覆って、シャッターを押してください")
