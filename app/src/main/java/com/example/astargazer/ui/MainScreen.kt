@@ -256,8 +256,8 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // 単発撮影用サスペンド関数（インターバル撮影の1コマ分：パブリック領域に直接出力＆スキャン）
-    suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int): Boolean {
+    // 単発撮影用サスペンド関数（インターバル撮影の1コマ分：パブリック領域に直接出力＆スキャン＆Exif自動書き込み）
+    suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
         return suspendCancellableCoroutine { continuation ->
             val outputFile = StorageHelper.createIntervalImageFile(context, index)
             val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
@@ -268,6 +268,12 @@ private fun MainAppContent() {
                 executor,
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        // ★ Exif メタデータ (日時, ISO, 露出時間, 機種名, 焦点距離) を自動記録
+                        com.example.astargazer.util.ExifHelper.saveExifAttributes(
+                            file = outputFile,
+                            iso = iso,
+                            exposureSeconds = selectedExposureSeconds
+                        )
                         // パブリック領域の各コマ画像を即時メディアスキャン登録
                         FileViewerHelper.scanFile(context, outputFile)
                         if (continuation.isActive) continuation.resume(true)
@@ -291,6 +297,7 @@ private fun MainAppContent() {
 
         val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
         val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
+        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
 
         isIntervalShootingActive = true
         shotCount = 0
@@ -318,7 +325,7 @@ private fun MainAppContent() {
                 val storageStr = StorageHelper.getFormattedAvailableStorage(context)
                 statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残り撮影可能: 約${remainingShots}枚 / 残容量: $storageStr]"
 
-                val success = captureIntervalFrame(imageCapture, shotCount)
+                val success = captureIntervalFrame(imageCapture, shotCount, optimalIso)
                 if (success) {
                     isIntervalCompleted = true
                 } else {
@@ -376,17 +383,6 @@ private fun MainAppContent() {
                         if (bitmap != null) {
                             capturedTestBitmap = bitmap
 
-                            // 試写画像をパブリックフォルダ (Pictures/AStargazer/TestShooting) に保存
-                            val testFile = StorageHelper.getTestShootingFile()
-                            try {
-                                FileOutputStream(testFile).use { out ->
-                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                                }
-                                FileViewerHelper.scanFile(context, testFile)
-                            } catch (e: Exception) {
-                                Log.e("MainScreen", "Failed to save test shooting image", e)
-                            }
-
                             val score = ImageContrastAnalyzer.calculateContrastScore(bitmap)
                             val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
 
@@ -402,6 +398,18 @@ private fun MainAppContent() {
                                     iso = adjustedIso,
                                     exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
                                 )
+                            }
+
+                            // 試写画像をパブリックフォルダ (Pictures/AStargazer/TestShooting) に保存＆Exif付与
+                            val testFile = StorageHelper.getTestShootingFile()
+                            try {
+                                FileOutputStream(testFile).use { out ->
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                }
+                                com.example.astargazer.util.ExifHelper.saveExifAttributes(testFile, adjustedIso, selectedExposureSeconds)
+                                FileViewerHelper.scanFile(context, testFile)
+                            } catch (e: Exception) {
+                                Log.e("MainScreen", "Failed to save test shooting image", e)
                             }
 
                             isProcessing = false
@@ -447,6 +455,12 @@ private fun MainAppContent() {
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     isProcessing = false
+                    val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
+                        file = darkFrameFile,
+                        iso = optimalIso,
+                        exposureSeconds = selectedExposureSeconds
+                    )
                     FileViewerHelper.scanFile(context, darkFrameFile)
 
                     val message = "ダークフレーム撮影が完了しました。カバーを外してください。"
