@@ -26,32 +26,40 @@ object ExifHelper {
             val exif = ExifInterface(file.absolutePath)
             val now = Date()
             val exifDateFormat = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
-            val formattedDate = exifDateFormat.format(now)
+            val subSecFormat = SimpleDateFormat("SSS", Locale.US)
 
-            // 1. 撮影日時
+            val formattedDate = exifDateFormat.format(now)
+            val formattedSubSec = subSecFormat.format(now)
+
+            // 1. 撮影日時 (秒単位まで記録: 例 2026:10:02 22:53:45)
             exif.setAttribute(ExifInterface.TAG_DATETIME, formattedDate)
             exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, formattedDate)
             exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, formattedDate)
 
-            // 2. ISO 感度 (旧タグ TAG_ISO_SPEED_RATINGS と推奨タグ TAG_PHOTOGRAPHIC_SENSITIVITY の両方に設定)
+            // 2. 秒未満・ミリ秒精度 (TAG_SUBSEC_TIME)
+            exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME, formattedSubSec)
+            exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, formattedSubSec)
+            exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME_DIGITIZED, formattedSubSec)
+
+            // 3. ISO 感度
             exif.setAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS, iso.toString())
             exif.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, iso.toString())
 
-            // 3. 露出時間 (秒)
+            // 4. 露出時間 (秒)
             exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exposureSeconds.toString())
 
-            // 4. カメラメーカー & 機種名 (AQUOS sense8)
+            // 5. カメラメーカー & 機種名 (AQUOS sense8)
             exif.setAttribute(ExifInterface.TAG_MAKE, "SHARP")
             exif.setAttribute(ExifInterface.TAG_MODEL, "SH-M26")
 
-            // 5. 焦点距離 (AQUOS sense8 標準レンズ 4.3mm)
+            // 6. 焦点距離 (AQUOS sense8 標準レンズ 4.3mm)
             exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, "43/10")
 
-            // 6. アプリ名
+            // 7. アプリ名
             exif.setAttribute(ExifInterface.TAG_SOFTWARE, "AStargazer 1.0")
 
             exif.saveAttributes()
-            Log.d("ExifHelper", "Saved Exif data to ${file.name}: ISO=$iso, Exposure=${exposureSeconds}s, Date=$formattedDate")
+            Log.d("ExifHelper", "Saved Exif data to ${file.name}: ISO=$iso, Exposure=${exposureSeconds}s, Date=$formattedDate.$formattedSubSec")
         } catch (e: Exception) {
             Log.e("ExifHelper", "Failed to save Exif data for ${file.name}", e)
         }
