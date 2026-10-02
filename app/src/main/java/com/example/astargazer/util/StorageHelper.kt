@@ -104,10 +104,19 @@ object StorageHelper {
 
     /**
      * 保存済みのインターバル撮影写真ファイルの一覧を取得
+     * (※ ゴミ箱ファイル .trashed- や ドット隠しファイルは除外)
      */
     fun getIntervalImageFiles(context: Context? = null): List<File> {
         val dir = getPublicAStargazerDir("Interval")
         if (!dir.exists()) return emptyList()
-        return dir.listFiles { file -> file.extension.lowercase(Locale.JAPAN) == "jpg" }?.sortedBy { it.name } ?: emptyList()
+
+        return dir.listFiles { file ->
+            val name = file.name
+            file.isFile &&
+                    !file.isHidden &&
+                    !name.startsWith(".") &&
+                    !name.startsWith(".trashed") &&
+                    (file.extension.equals("jpg", ignoreCase = true) || file.extension.equals("jpeg", ignoreCase = true))
+        }?.sortedBy { it.name } ?: emptyList()
     }
 }
