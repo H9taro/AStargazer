@@ -56,7 +56,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
@@ -90,7 +89,6 @@ import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.StorageHelper
 import com.example.astargazer.util.VideoEncoderHelper
-import com.example.astargazer.util.VoiceCommandManager
 import com.example.astargazer.util.rememberTtsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -165,42 +163,31 @@ enum class WorkflowStep {
 fun MainScreen() {
     val context = LocalContext.current
 
-    // カメラおよび録音（音声コマンド用）パーミッション状態
+    // カメラパーミッション状態
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         )
     }
 
-    var hasAudioPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        )
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        hasCameraPermission = permissions[Manifest.permission.CAMERA] ?: hasCameraPermission
-        hasAudioPermission = permissions[Manifest.permission.RECORD_AUDIO] ?: hasAudioPermission
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasCameraPermission = isGranted
     }
 
     LaunchedEffect(Unit) {
-        if (!hasCameraPermission || !hasAudioPermission) {
-            permissionLauncher.launch(
-                arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
-            )
+        if (!hasCameraPermission) {
+            launcher.launch(Manifest.permission.CAMERA)
         }
     }
 
     if (!hasCameraPermission) {
         PermissionRequestContent {
-            permissionLauncher.launch(
-                arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
-            )
+            launcher.launch(Manifest.permission.CAMERA)
         }
     } else {
-        MainAppContent(hasAudioPermission = hasAudioPermission)
+        MainAppContent()
     }
 }
 
@@ -218,7 +205,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "カメラおよびマイクの権限が必要です",
+                text = "カメラのアクセス権限が必要です",
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -226,7 +213,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "星空撮影および音声操作（「とります」でのシャッター起動）に使用します。",
+                text = "星空の試写およびインターバル撮影を行うため、カメラ機能を使用します。",
                 color = Color.LightGray,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
@@ -244,7 +231,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalCamera2Interop::class)
 @Composable
-private fun MainAppContent(hasAudioPermission: Boolean) {
+private fun MainAppContent() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val ttsManager = rememberTtsManager()
@@ -281,12 +268,9 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
     // ダークフレーム使用フラグ (デフォルト true)
     var useDarkFrame by remember { mutableStateOf(true) }
 
-    // リアルタイム音声認識ステータス表示
-    var voiceStatusText by remember { mutableStateOf("音声受付中...") }
-
     // ステータスメッセージ
     var statusMessage by remember {
-        mutableStateOf("露出時間を選択し、開始ボタンを押すか「とります」と話してください。")
+        mutableStateOf("露出時間・画質を選択し、シャッターボタンを押してください。")
     }
 
     // 必要に応じて画像をクロップ・リサイズして指定ファイルに書き込む共通関数
@@ -313,7 +297,7 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
         }
     }
 
-    // ★ 単発撮影用サスペンド関数（インターバル撮影の1コマ分）- 次コマを待たせない非同期爆速化
+    // 単発撮影用サスペンド関数（インターバル撮影の1コマ分）
     suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
         return suspendCancellableCoroutine { continuation ->
             val outputFile = StorageHelper.createIntervalImageFile(context, index)
@@ -325,10 +309,8 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                 executor,
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        // ★1. 次のコマの撮影を開始させるため即座にカメラ待機を解放！
                         if (continuation.isActive) continuation.resume(true)
 
-                        // ★2. 重い画像処理（16:9クロップ・JPEG再圧縮・Exif書込み）はIOスレッドで非同期並列実行
                         coroutineScope.launch(Dispatchers.IO) {
                             try {
                                 if (selectedResolution != CaptureResolution.FULL) {
@@ -357,16 +339,13 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
         }
     }
 
-    // インターバル撮影ループ関数 (爆速最適化版: 空き容量チェックは開始直後の1回のみ)
+    // インターバル撮影ループ関数
     fun startIntervalShootingLoop() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
             return
         }
 
-        // ★ 撮影開始直後の1回のみ空き容量を計算（連写中のディスク読込を廃止して限界まで高速化）
-        val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
-        val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
 
         isIntervalShootingActive = true
@@ -390,14 +369,13 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                     Log.w("MainScreen", "Failed to capture frame $shotCount")
                 }
 
-                // 露出時間に応じた最適な最小ギャップ (0.25秒設定時はウェイトを限界まで短縮)
                 val gapDelay = if (selectedExposureSeconds <= 0.5) 10L else 50L
                 delay(gapDelay)
             }
         }
     }
 
-    // ★ 主シャッターボタン押下アクション（ボタンクリック＆音声コマンド共通）
+    // 主シャッターボタン押下アクション
     val onTriggerShutter: () -> Unit = {
         if (!isProcessing) {
             when (selectedTab) {
@@ -424,42 +402,16 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                 }
                 MainMenuTab.INTERVAL -> {
                     if (isIntervalShootingActive) {
-                        // 停止処理
                         isIntervalShootingActive = false
                         if (shotCount > 0) isIntervalCompleted = true
                         statusMessage = "インターバル撮影を正常停止しました。(合計: ${shotCount}枚)"
                         ttsManager.speak("インターバル撮影を終了しました")
                     } else {
-                        // ★ 修正: 音声「とります」でのインターバル撮影スタートを実行！
                         startIntervalShootingLoop()
                     }
                 }
                 MainMenuTab.SAVE -> {}
             }
-        }
-    }
-
-    // 音声コマンド認識マネージャーのリスニング制御
-    val voiceCommandManager = remember {
-        VoiceCommandManager(
-            context = context,
-            onRecognizedStatusChanged = { status ->
-                voiceStatusText = status
-            },
-            onShutterCommandTriggered = {
-                coroutineScope.launch(Dispatchers.Main) {
-                    onTriggerShutter()
-                }
-            }
-        )
-    }
-
-    DisposableEffect(hasAudioPermission) {
-        if (hasAudioPermission) {
-            voiceCommandManager.startListening()
-        }
-        onDispose {
-            voiceCommandManager.stopListening()
         }
     }
 
@@ -706,7 +658,6 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                         isDropdownExpanded = isDropdownExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
-                        voiceStatusText = voiceStatusText,
                         onExposureChange = { selectedExposureSeconds = it },
                         onResolutionResolutionChange = { selectedResolution = it },
                         onUseDarkFrameChange = { useDarkFrame = it },
@@ -727,7 +678,6 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                         selectedExposureSeconds = selectedExposureSeconds,
                         selectedResolution = selectedResolution,
                         statusMessage = statusMessage,
-                        voiceStatusText = voiceStatusText,
                         onTriggerShutter = onTriggerShutter,
                         onResolutionResolutionChange = { selectedResolution = it },
                         onCameraBound = { camera, imageCapture ->
@@ -831,7 +781,6 @@ private fun SetupTabContent(
     isDropdownExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
-    voiceStatusText: String,
     onExposureChange: (Double) -> Unit,
     onResolutionResolutionChange: (CaptureResolution) -> Unit,
     onUseDarkFrameChange: (Boolean) -> Unit,
@@ -891,7 +840,7 @@ private fun SetupTabContent(
             CropGuideOverlay(selectedResolution = selectedResolution)
         }
 
-        // ヘッダー（見切れ解消レイアウト ＋ リアルタイム音声ステータス表示）
+        // ヘッダー（見切れ解消レイアウト）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -916,23 +865,6 @@ private fun SetupTabContent(
                         color = Color(0xFFFF8A80),
                         fontSize = 9.sp
                     )
-                }
-
-                Surface(
-                    color = Color(0xFF1E88E5).copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "🎙 $voiceStatusText",
-                            color = Color(0xFF64B5F6),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
                 }
             }
 
@@ -1112,7 +1044,6 @@ private fun IntervalTabContent(
     selectedExposureSeconds: Double,
     selectedResolution: CaptureResolution,
     statusMessage: String,
-    voiceStatusText: String,
     onTriggerShutter: () -> Unit,
     onResolutionResolutionChange: (CaptureResolution) -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
@@ -1162,19 +1093,6 @@ private fun IntervalTabContent(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
-
-                Surface(
-                    color = Color(0xFF1E88E5).copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(
-                        text = "🎙 $voiceStatusText",
-                        color = Color(0xFF64B5F6),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -1360,7 +1278,7 @@ private fun SaveTabContent(
             )
             Spacer(modifier = Modifier.height(24.dp))
 
-            Card(
+      Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
                 shape = RoundedCornerShape(12.dp)
