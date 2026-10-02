@@ -87,7 +87,6 @@ import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.StorageHelper
 import com.example.astargazer.util.VideoEncoderHelper
-import com.example.astargazer.util.rememberTtsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -110,9 +109,6 @@ enum class CaptureResolution(val label: String, val shortLabel: String, val widt
     FULL("最大画質 (センサー解像度)", "最大画質", 0, 0),
     HD("HD画質 (1280×720 / 16:9)", "HD 720p", 1280, 720);
 
-    /**
-     * 横スワイプ用ループ順序: フルHD -> 最大画質 -> HD -> フルHD
-     */
     fun next(): CaptureResolution {
         return when (this) {
             FHD -> FULL
@@ -123,7 +119,7 @@ enum class CaptureResolution(val label: String, val shortLabel: String, val widt
 }
 
 /**
- * 露出時間のフォーマット（整数の場合は "1秒", 小数の場合は "0.25秒" など）
+ * 露出時間のフォーマット
  */
 fun formatExposureSeconds(seconds: Double): String {
     return if (seconds % 1.0 == 0.0) {
@@ -134,7 +130,7 @@ fun formatExposureSeconds(seconds: Double): String {
 }
 
 /**
- * アプリのメインメニュータブ
+ * メニュータブ
  */
 enum class MainMenuTab(val label: String) {
     SETUP("撮影前設定"),
@@ -143,24 +139,21 @@ enum class MainMenuTab(val label: String) {
 }
 
 /**
- * 撮影前設定ワークフローの各ステップ (ダークフレーム必須)
+ * 撮影前設定ワークフロー（ダークフレーム先、試写後）
  */
 enum class WorkflowStep {
-    EXPOSURE_SETTING,               // 1. 露出時間設定
-    POLARIS_ALIGNMENT_NOTICE,       // 2. 開始通知（北極星合わせ案内）
-    POLARIS_TEST_SHOOTING_ADJUST,   // 3. 試写と自動調整
+    DARK_FRAME_NOTICE,              // 1a. ダークフレーム撮影案内（レンズを覆う）
+    DARK_FRAME_SHOOTING,            // 1b. ダークフレーム撮影実行
+    POLARIS_ALIGNMENT_NOTICE,       // 2. 北極星合わせ案内
+    POLARIS_TEST_SHOOTING_ADJUST,   // 3. 試写と自動調整（ノイズ減算適用）
     TEST_RESULT_DISPLAY,            // 4. 試写結果表示
-    DIRECTION_CONFIRM_NOTICE,       // 5. 撮影方向確定案内
-    DARK_FRAME_NOTICE,              // 6a. ダークフレーム撮影案内 (必須)
-    DARK_FRAME_SHOOTING,            // 6b. ダークフレーム撮影実行 (必須)
-    SETUP_COMPLETED                 // 6c. 撮影前設定完了
+    SETUP_COMPLETED                 // 5. 撮影前設定完了
 }
 
 @Composable
 fun MainScreen() {
     val context = LocalContext.current
 
-    // カメラパーミッション状態
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -231,43 +224,32 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
 private fun MainAppContent() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val ttsManager = rememberTtsManager()
 
-    // 現在選択中のメニュータブ
     var selectedTab by remember { mutableStateOf(MainMenuTab.SETUP) }
 
-    // 設定・撮影完了状態のフラグ
     var isSetupCompleted by remember { mutableStateOf(false) }
     var isIntervalCompleted by remember { mutableStateOf(false) }
 
-    // カメラ及び UseCase 保持
     var cameraInstance by remember { mutableStateOf<Camera?>(null) }
     var imageCaptureInstance by remember { mutableStateOf<ImageCapture?>(null) }
 
-    // 試写キャプチャ画像と処理状態
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
 
-    // インターバル撮影状態
     var isIntervalShootingActive by remember { mutableStateOf(false) }
     var shotCount by remember { mutableIntStateOf(0) }
 
-    // 現在の撮影前設定ステップ
-    var currentStep by remember { mutableStateOf(WorkflowStep.EXPOSURE_SETTING) }
+    var currentStep by remember { mutableStateOf(WorkflowStep.DARK_FRAME_NOTICE) }
 
-    // 選択された露出時間 (デフォルト 4.0秒)
     var selectedExposureSeconds by remember { mutableDoubleStateOf(4.0) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
-
-    // 選択された撮影解像度/クロップサイズ (デフォルト フルHD)
     var selectedResolution by remember { mutableStateOf(CaptureResolution.FHD) }
 
-    // ステータスメッセージ
     var statusMessage by remember {
-        mutableStateOf("露出時間・画質を選択し、シャッターボタンを押してください。")
+        mutableStateOf("露出時間・画質を選択し、レンズを覆ってシャッターを押してください（ダーク撮影）。")
     }
 
-    // 必要に応じて画像をクロップ・リサイズして非圧縮 PNG で指定ファイルに書き込む共通関数
+    // 画像クロップ・保存共通関数
     fun processAndSaveFile(outputFile: File, rawFile: File) {
         if (selectedResolution == CaptureResolution.FULL) {
             FileViewerHelper.scanFile(context, rawFile)
@@ -291,7 +273,7 @@ private fun MainAppContent() {
         }
     }
 
-    // 単発撮影用サスペンド関数（インターバル撮影の1コマ分）
+    // インターバル1コマ撮影
     suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
         return suspendCancellableCoroutine { continuation ->
             val outputFile = StorageHelper.createIntervalImageFile(context, index)
@@ -333,12 +315,16 @@ private fun MainAppContent() {
         }
     }
 
-    // インターバル撮影ループ関数
+    // インターバル撮影ループ
     fun startIntervalShootingLoop() {
         val imageCapture = imageCaptureInstance ?: run {
-            statusMessage = "キャプチャ機能の準備ができていません。"
+            statusMessage = "カメラの準備ができていません。"
             return
         }
+
+        val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
+        val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
+        var currentRemainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
 
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
 
@@ -346,15 +332,13 @@ private fun MainAppContent() {
         shotCount = 0
 
         coroutineScope.launch {
-            val startMsg = "インターバル撮影を開始しました。(画質: ${selectedResolution.shortLabel})"
-            statusMessage = startMsg
-            ttsManager.speak(startMsg)
+            statusMessage = "インターバル撮影を開始しました。(画質: ${selectedResolution.shortLabel})"
 
             while (isIntervalShootingActive) {
                 shotCount++
+                if (currentRemainingShots > 0) currentRemainingShots--
 
-                val storageStr = StorageHelper.getFormattedAvailableStorage(context)
-                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残容量: $storageStr]"
+                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残り撮影可能: 約${currentRemainingShots}枚]"
 
                 val success = captureIntervalFrame(imageCapture, shotCount, optimalIso)
                 if (success) {
@@ -366,19 +350,17 @@ private fun MainAppContent() {
         }
     }
 
-    // 主シャッターボタン押下アクション
+    // シャッターボタン押下アクション（ワークフロー制御）
     val onTriggerShutter: () -> Unit = {
         if (!isProcessing) {
             when (selectedTab) {
                 MainMenuTab.SETUP -> {
                     when (currentStep) {
-                        WorkflowStep.EXPOSURE_SETTING -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
-                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
-                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
-                        WorkflowStep.TEST_RESULT_DISPLAY -> currentStep = WorkflowStep.DARK_FRAME_NOTICE
-                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> currentStep = WorkflowStep.DARK_FRAME_NOTICE
                         WorkflowStep.DARK_FRAME_NOTICE -> currentStep = WorkflowStep.DARK_FRAME_SHOOTING
                         WorkflowStep.DARK_FRAME_SHOOTING -> {}
+                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
+                        WorkflowStep.TEST_RESULT_DISPLAY -> currentStep = WorkflowStep.SETUP_COMPLETED
                         WorkflowStep.SETUP_COMPLETED -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
                     }
                 }
@@ -386,8 +368,7 @@ private fun MainAppContent() {
                     if (isIntervalShootingActive) {
                         isIntervalShootingActive = false
                         if (shotCount > 0) isIntervalCompleted = true
-                        statusMessage = "インターバル撮影を正常停止しました。(合計: ${shotCount}枚)"
-                        ttsManager.speak("インターバル撮影を終了しました")
+                        statusMessage = "インターバル撮影を停止しました。(合計: ${shotCount}枚)"
                     } else {
                         startIntervalShootingLoop()
                     }
@@ -397,110 +378,21 @@ private fun MainAppContent() {
         }
     }
 
-    // 撮影前設定の強制的キャンセル
+    // 設定キャンセル
     fun cancelSetup() {
         isProcessing = false
         isSetupCompleted = false
         isIntervalCompleted = false
-        currentStep = WorkflowStep.EXPOSURE_SETTING
+        currentStep = WorkflowStep.DARK_FRAME_NOTICE
         capturedTestBitmap = null
-        val msg = "撮影前設定をキャンセルしました。「インターバル撮影」「保存」が無効化されました。"
-        statusMessage = msg
-        ttsManager.speak("撮影前設定をキャンセルしました")
+        statusMessage = "設定をリセットしました。レンズを覆ってシャッターを押してください。"
         selectedTab = MainMenuTab.SETUP
     }
 
-    // 試写と自動調整の実行関数
-    fun runTestShootingAndAutoAdjust() {
-        val camera = cameraInstance ?: run {
-            statusMessage = "カメラの準備ができていません。"
-            return
-        }
-        val imageCapture = imageCaptureInstance ?: run {
-            statusMessage = "キャプチャ機能の準備ができていません。"
-            return
-        }
-
-        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
-
-        isProcessing = true
-        statusMessage = "試写を実行中: ピント(無限遠) & ISO($optimalIso) 自動調整..."
-
-        CameraControlManager.setManualFocusAndExposure(
-            camera = camera,
-            focusDistance = 0.0f,
-            iso = optimalIso,
-            exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
-        )
-
-        val executor = ContextCompat.getMainExecutor(context)
-        imageCapture.takePicture(
-            executor,
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    coroutineScope.launch {
-                        var bitmap = BitmapUtils.imageProxyToBitmap(image)
-                        image.close()
-
-                        if (bitmap != null) {
-                            if (selectedResolution != CaptureResolution.FULL) {
-                                bitmap = BitmapUtils.cropTo169(bitmap, selectedResolution.width, selectedResolution.height)
-                            }
-                            capturedTestBitmap = bitmap
-
-                            val testFile = StorageHelper.getTestShootingFile()
-                            try {
-                                FileOutputStream(testFile).use { out ->
-                                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                                }
-                                com.example.astargazer.util.ExifHelper.saveExifAttributes(testFile, optimalIso, selectedExposureSeconds)
-                                FileViewerHelper.scanFile(context, testFile)
-                            } catch (e: Exception) {
-                                Log.e("MainScreen", "Failed to save test shooting image", e)
-                            }
-
-                            val score = ImageContrastAnalyzer.calculateContrastScore(bitmap)
-                            val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
-
-                            val avgLuminance = ImageContrastAnalyzer.calculateAverageLuminance(bitmap)
-                            val adjustedIso = ImageContrastAnalyzer.adjustIsoForLuminance(optimalIso, avgLuminance)
-
-                            if (adjustedIso != optimalIso) {
-                                CameraControlManager.setManualFocusAndExposure(
-                                    camera = camera,
-                                    focusDistance = 0.0f,
-                                    iso = adjustedIso,
-                                    exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
-                                )
-                            }
-
-                            isProcessing = false
-
-                            val statusNotice = if (adjustedIso < optimalIso) "白飛び補正: ISO $adjustedIso" else "ISO $optimalIso"
-                            val message = "試写調整完了 ($statusNotice, スコア: $scoreFormatted)。レンズ（カメラ）を覆った状態でシャッターを押してください。"
-                            statusMessage = message
-                            currentStep = WorkflowStep.DARK_FRAME_NOTICE
-                            ttsManager.speak("試写調整が完了しました。レンズを覆って、シャッターを押してください")
-                        } else {
-                            isProcessing = false
-                            statusMessage = "試写画像の取得に失敗しました。"
-                        }
-                    }
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    Log.e("MainScreen", "Test capture failed", exception)
-                    isProcessing = false
-                    statusMessage = "試写撮影エラー: ${exception.message}"
-                }
-            }
-        )
-    }
-
-    // ダークフレーム撮影実行関数
+    // ダークフレーム撮影実行
     fun runDarkFrameShooting() {
         val imageCapture = imageCaptureInstance ?: run {
-            statusMessage = "キャプチャ機能の準備ができていません。"
+            statusMessage = "カメラの準備ができていません。"
             return
         }
 
@@ -509,8 +401,8 @@ private fun MainAppContent() {
 
         val darkFrameFile = StorageHelper.getDarkFrameFile(context)
         val outputOptions = ImageCapture.OutputFileOptions.Builder(darkFrameFile).build()
-
         val executor = ContextCompat.getMainExecutor(context)
+
         imageCapture.takePicture(
             outputOptions,
             executor,
@@ -529,13 +421,8 @@ private fun MainAppContent() {
                     )
                     FileViewerHelper.scanFile(context, darkFrameFile)
 
-                    val message = "ダークフレーム撮影が完了しました。カバーを外してください。"
-                    statusMessage = message
-                    ttsManager.speak(message)
-                    currentStep = WorkflowStep.SETUP_COMPLETED
-                    isSetupCompleted = true
-
-                    selectedTab = MainMenuTab.INTERVAL
+                    statusMessage = "ダークフレーム撮影完了。レンズカバーを外し、星空に向けてシャッターを押してください。"
+                    currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -547,11 +434,105 @@ private fun MainAppContent() {
         )
     }
 
-    // ステップ進行の監視
+    // 試写と自動調整（ダークフレーム減算適用）
+    fun runTestShootingAndAutoAdjust() {
+        val camera = cameraInstance ?: run {
+            statusMessage = "カメラの準備ができていません。"
+            return
+        }
+        val imageCapture = imageCaptureInstance ?: run {
+            statusMessage = "カメラの準備ができていません。"
+            return
+        }
+
+        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+
+        isProcessing = true
+        statusMessage = "試写を実行中: 無限遠ピント & ISO($optimalIso)..."
+
+        CameraControlManager.setManualFocusAndExposure(
+            camera = camera,
+            focusDistance = 0.0f,
+            iso = optimalIso,
+            exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
+        )
+
+        val executor = ContextCompat.getMainExecutor(context)
+        imageCapture.takePicture(
+            executor,
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    coroutineScope.launch(Dispatchers.IO) {
+                        var bitmap = BitmapUtils.imageProxyToBitmap(image)
+                        image.close()
+
+                        if (bitmap != null) {
+                            if (selectedResolution != CaptureResolution.FULL) {
+                                bitmap = BitmapUtils.cropTo169(bitmap, selectedResolution.width, selectedResolution.height)
+                            }
+
+                            // ダークフレーム減算の適用
+                            val darkFile = StorageHelper.getDarkFrameFile(context)
+                            val finalBitmap = if (darkFile.exists()) {
+                                val darkBmp = BitmapFactory.decodeFile(darkFile.absolutePath)
+                                if (darkBmp != null) {
+                                    val subtracted = ImageCompositor.subtractDarkFrame(bitmap, darkBmp)
+                                    bitmap.recycle()
+                                    darkBmp.recycle()
+                                    subtracted
+                                } else {
+                                    bitmap
+                                }
+                            } else {
+                                bitmap
+                            }
+
+                            capturedTestBitmap = finalBitmap
+
+                            val testFile = StorageHelper.getTestShootingFile()
+                            try {
+                                FileOutputStream(testFile).use { out ->
+                                    finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                                }
+                                com.example.astargazer.util.ExifHelper.saveExifAttributes(testFile, optimalIso, selectedExposureSeconds)
+                                FileViewerHelper.scanFile(context, testFile)
+                            } catch (e: Exception) {
+                                Log.e("MainScreen", "Failed to save test image", e)
+                            }
+
+                            val score = ImageContrastAnalyzer.calculateContrastScore(finalBitmap)
+                            val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
+
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                statusMessage = "試写調整完了 (スコア: $scoreFormatted, ノイズ減算済)。設定完了！"
+                                currentStep = WorkflowStep.SETUP_COMPLETED
+                                isSetupCompleted = true
+                                selectedTab = MainMenuTab.INTERVAL
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                isProcessing = false
+                                statusMessage = "試写画像の取得に失敗しました。"
+                            }
+                        }
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    Log.e("MainScreen", "Test capture failed", exception)
+                    isProcessing = false
+                    statusMessage = "試写撮影エラー: ${exception.message}"
+                }
+            }
+        )
+    }
+
+    // ワークフロー監視
     LaunchedEffect(currentStep) {
         when (currentStep) {
-            WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> runTestShootingAndAutoAdjust()
             WorkflowStep.DARK_FRAME_SHOOTING -> runDarkFrameShooting()
+            WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> runTestShootingAndAutoAdjust()
             else -> {}
         }
     }
@@ -575,7 +556,7 @@ private fun MainAppContent() {
                         onClick = {
                             selectedTab = tab
                             if (tab == MainMenuTab.SETUP) {
-                                currentStep = WorkflowStep.EXPOSURE_SETTING
+                                currentStep = WorkflowStep.DARK_FRAME_NOTICE
                             }
                         },
                         label = {
@@ -630,7 +611,7 @@ private fun MainAppContent() {
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
                         onExposureChange = { selectedExposureSeconds = it },
-                        onResolutionResolutionChange = { selectedResolution = it },
+                        onResolutionChange = { selectedResolution = it },
                         onDropdownToggle = { isDropdownExpanded = it },
                         onShutterClick = onTriggerShutter,
                         onCancelSetup = { cancelSetup() },
@@ -649,7 +630,7 @@ private fun MainAppContent() {
                         selectedResolution = selectedResolution,
                         statusMessage = statusMessage,
                         onTriggerShutter = onTriggerShutter,
-                        onResolutionResolutionChange = { selectedResolution = it },
+                        onResolutionChange = { selectedResolution = it },
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
                             imageCaptureInstance = imageCapture
@@ -660,8 +641,7 @@ private fun MainAppContent() {
                 MainMenuTab.SAVE -> {
                     SaveTabContent(
                         context = context,
-                        coroutineScope = coroutineScope,
-                        ttsManager = ttsManager
+                        coroutineScope = coroutineScope
                     )
                 }
             }
@@ -670,7 +650,7 @@ private fun MainAppContent() {
 }
 
 /**
- * プレビュー画面上にクロップ切り取り範囲を示す枠線・マスクを描画するコンポーザブル
+ * クロップガイドオーバーレイ
  */
 @Composable
 private fun CropGuideOverlay(
@@ -737,7 +717,7 @@ private fun CropGuideOverlay(
 }
 
 /**
- * タブ1: 撮影前設定コンテンツ (ステップ1-6)
+ * 撮影前設定タブコンテンツ
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -750,7 +730,7 @@ private fun SetupTabContent(
     isProcessing: Boolean,
     statusMessage: String,
     onExposureChange: (Double) -> Unit,
-    onResolutionResolutionChange: (CaptureResolution) -> Unit,
+    onResolutionChange: (CaptureResolution) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
     onShutterClick: () -> Unit,
     onCancelSetup: () -> Unit,
@@ -766,9 +746,7 @@ private fun SetupTabContent(
                 detectVerticalDragGestures(
                     onDragStart = { totalDragY = 0f },
                     onDragEnd = {
-                        if (totalDragY < -120f) {
-                            onCancelSetup()
-                        }
+                        if (totalDragY < -120f) onCancelSetup()
                     },
                     onVerticalDrag = { change, dragAmount ->
                         change.consume()
@@ -780,9 +758,7 @@ private fun SetupTabContent(
                 detectHorizontalDragGestures(
                     onDragStart = { totalDragX = 0f },
                     onDragEnd = {
-                        if (kotlin.math.abs(totalDragX) > 80f) {
-                            onResolutionResolutionChange(selectedResolution.next())
-                        }
+                        if (kotlin.math.abs(totalDragX) > 80f) onResolutionChange(selectedResolution.next())
                     },
                     onHorizontalDrag = { change, dragAmount ->
                         change.consume()
@@ -803,11 +779,10 @@ private fun SetupTabContent(
                 modifier = Modifier.fillMaxSize(),
                 onCameraBound = onCameraBound
             )
-
             CropGuideOverlay(selectedResolution = selectedResolution)
         }
 
-        // ヘッダー（見切れ解消レイアウト）
+        // ヘッダーレイアウト
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -837,7 +812,7 @@ private fun SetupTabContent(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            val isChangeable = currentStep == WorkflowStep.EXPOSURE_SETTING
+            val isChangeable = currentStep == WorkflowStep.DARK_FRAME_NOTICE
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -918,7 +893,7 @@ private fun SetupTabContent(
                     CircularProgressIndicator(color = Color(0xFF1E88E5))
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = if (currentStep == WorkflowStep.DARK_FRAME_SHOOTING) "ダークフレーム撮影中..." else "星像自動調整中...",
+                        text = if (currentStep == WorkflowStep.DARK_FRAME_SHOOTING) "ダークフレーム撮影中..." else "試写・ノイズ減算処理中...",
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
@@ -933,9 +908,7 @@ private fun SetupTabContent(
                 .padding(horizontal = 24.dp)
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 120.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color.Black.copy(alpha = 0.75f)
-            ),
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
             shape = RoundedCornerShape(12.dp)
         ) {
             Text(
@@ -982,7 +955,7 @@ private fun SetupTabContent(
 }
 
 /**
- * タブ2: インターバル撮影コンテンツ (ステップ7)
+ * インターバル撮影タブコンテンツ
  */
 @Composable
 private fun IntervalTabContent(
@@ -992,7 +965,7 @@ private fun IntervalTabContent(
     selectedResolution: CaptureResolution,
     statusMessage: String,
     onTriggerShutter: () -> Unit,
-    onResolutionResolutionChange: (CaptureResolution) -> Unit,
+    onResolutionChange: (CaptureResolution) -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
     var totalDragX by remember { mutableFloatStateOf(0f) }
@@ -1005,7 +978,7 @@ private fun IntervalTabContent(
                     onDragStart = { totalDragX = 0f },
                     onDragEnd = {
                         if (kotlin.math.abs(totalDragX) > 80f && !isIntervalActive) {
-                            onResolutionResolutionChange(selectedResolution.next())
+                            onResolutionChange(selectedResolution.next())
                         }
                     },
                     onHorizontalDrag = { change, dragAmount ->
@@ -1019,7 +992,6 @@ private fun IntervalTabContent(
             modifier = Modifier.fillMaxSize(),
             onCameraBound = onCameraBound
         )
-
         CropGuideOverlay(selectedResolution = selectedResolution)
 
         Column(
@@ -1029,19 +1001,12 @@ private fun IntervalTabContent(
                 .background(Color.Black.copy(alpha = 0.65f))
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "AStargazer - インターバル撮影",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
+            Text(
+                text = "AStargazer - インターバル撮影",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 画質: ${selectedResolution.shortLabel} ↔ | 撮影数: ${shotCount}コマ",
@@ -1056,9 +1021,7 @@ private fun IntervalTabContent(
                 .padding(horizontal = 24.dp)
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 120.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color.Black.copy(alpha = 0.75f)
-            ),
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
             shape = RoundedCornerShape(12.dp)
         ) {
             Text(
@@ -1114,13 +1077,12 @@ private fun IntervalTabContent(
 }
 
 /**
- * タブ3: 保存コンテンツ（*.mp4 タイムラプス動画 ＆ 比較明合成 *.jpg）
+ * 保存タブコンテンツ
  */
 @Composable
 private fun SaveTabContent(
     context: android.content.Context,
-    coroutineScope: kotlinx.coroutines.CoroutineScope,
-    ttsManager: com.example.astargazer.util.TtsManager
+    coroutineScope: kotlinx.coroutines.CoroutineScope
 ) {
     val intervalFiles = remember { StorageHelper.getIntervalImageFiles(context) }
     var isGenerating by remember { mutableStateOf(false) }
@@ -1128,17 +1090,17 @@ private fun SaveTabContent(
     var lastExportedFile by remember { mutableStateOf<File?>(null) }
     var exportStatusMessage by remember {
         mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存するファイル形式を選択してください。(ダークフレーム自動減算適用)"
+            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存する形式を選択してください。(ダークフレーム自動減算適用)"
             else "保存可能な撮影済み画像がありません。"
         )
     }
 
-    // タイムラプス動画（*.mp4）生成
+    // タイムラプス動画出力
     fun generateTimelapseVideo() {
         if (intervalFiles.isEmpty()) return
         isGenerating = true
         progress = 0f
-        exportStatusMessage = "タイムラプス動画(*.mp4)を生成中 (ダークフレーム自動減算適用)..."
+        exportStatusMessage = "タイムラプス動画(*.mp4)を生成中..."
 
         coroutineScope.launch(Dispatchers.IO) {
             val outputFile = StorageHelper.getTimelapseVideoFile(context)
@@ -1157,9 +1119,7 @@ private fun SaveTabContent(
                 if (success) {
                     FileViewerHelper.scanFile(context, outputFile)
                     lastExportedFile = outputFile
-                    val msg = "タイムラプス動画(*.mp4)の生成が完了しました！\n保存先: ${outputFile.name}"
-                    exportStatusMessage = msg
-                    ttsManager.speak("タイムラプス動画の書き出しが完了しました")
+                    exportStatusMessage = "タイムラプス動画の生成が完了しました！\n保存先: ${outputFile.name}"
                     FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
                 } else {
                     exportStatusMessage = "タイムラプス動画の生成に失敗しました。"
@@ -1168,12 +1128,12 @@ private fun SaveTabContent(
         }
     }
 
-    // 比較明合成（*.jpg）生成
+    // 比較明合成出力
     fun generateLightenBlendComposite() {
         if (intervalFiles.isEmpty()) return
         isGenerating = true
         progress = 0f
-        exportStatusMessage = "比較明合成静止画(*.jpg)を生成中 (ダークフレーム自動減算適用)..."
+        exportStatusMessage = "比較明合成静止画(*.jpg)を生成中..."
 
         coroutineScope.launch(Dispatchers.IO) {
             val outputFile = StorageHelper.getCompositeImageFile(context)
@@ -1191,9 +1151,7 @@ private fun SaveTabContent(
                 if (success) {
                     FileViewerHelper.scanFile(context, outputFile)
                     lastExportedFile = outputFile
-                    val msg = "比較明合成静止画(*.jpg)の生成が完了しました！\n保存先: ${outputFile.name}"
-                    exportStatusMessage = msg
-                    ttsManager.speak("比較明合成画像の書き出しが完了しました")
+                    exportStatusMessage = "比較明合成画像の生成が完了しました！\n保存先: ${outputFile.name}"
                     FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
                 } else {
                     exportStatusMessage = "比較明合成画像の生成に失敗しました。"
@@ -1222,7 +1180,7 @@ private fun SaveTabContent(
             )
             Spacer(modifier = Modifier.height(24.dp))
 
-      Card(
+            Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
                 shape = RoundedCornerShape(12.dp)
@@ -1258,71 +1216,43 @@ private fun SaveTabContent(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 1. タイムラプス動画(*.mp4) ボタン
             Button(
                 onClick = { generateTimelapseVideo() },
                 enabled = !isGenerating && intervalFiles.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF1E88E5),
-                    disabledContainerColor = Color.DarkGray
-                ),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5), disabledContainerColor = Color.DarkGray),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text(
-                    text = "🎬 タイムラプス動画(*.mp4)を出力",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Text(text = "🎬 タイムラプス動画(*.mp4)を出力", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 2. 比較明合成静止画(*.jpg) ボタン
             Button(
                 onClick = { generateLightenBlendComposite() },
                 enabled = !isGenerating && intervalFiles.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF43A047),
-                    disabledContainerColor = Color.DarkGray
-                ),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047), disabledContainerColor = Color.DarkGray),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
                 shape = RoundedCornerShape(8.dp)
             ) {
-                Text(
-                    text = "🌌 比較明合成の静止画(*.jpg)を出力",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Text(text = "🌌 比較明合成の静止画(*.jpg)を出力", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             }
 
-            // 保存完了ファイルがある場合に「Google Filesで開く」ボタンを表示
             if (lastExportedFile != null) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
-                    onClick = {
-                        FileViewerHelper.openInGoogleFilesOrViewer(context, lastExportedFile!!)
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFFF9800)
-                    ),
+                    onClick = { FileViewerHelper.openInGoogleFilesOrViewer(context, lastExportedFile!!) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Text(
-                        text = "📁 Google Filesで保存ファイルを開く",
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(text = "📁 Google Filesで保存ファイルを開く", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
