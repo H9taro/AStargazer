@@ -38,8 +38,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -91,7 +89,6 @@ import com.example.astargazer.util.StorageHelper
 import com.example.astargazer.util.VideoEncoderHelper
 import com.example.astargazer.util.rememberTtsManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -146,7 +143,7 @@ enum class MainMenuTab(val label: String) {
 }
 
 /**
- * 撮影前設定ワークフローの各ステップ
+ * 撮影前設定ワークフローの各ステップ (ダークフレーム必須)
  */
 enum class WorkflowStep {
     EXPOSURE_SETTING,               // 1. 露出時間設定
@@ -154,8 +151,8 @@ enum class WorkflowStep {
     POLARIS_TEST_SHOOTING_ADJUST,   // 3. 試写と自動調整
     TEST_RESULT_DISPLAY,            // 4. 試写結果表示
     DIRECTION_CONFIRM_NOTICE,       // 5. 撮影方向確定案内
-    DARK_FRAME_NOTICE,              // 6a. ダークフレーム撮影案内
-    DARK_FRAME_SHOOTING,            // 6b. ダークフレーム撮影実行
+    DARK_FRAME_NOTICE,              // 6a. ダークフレーム撮影案内 (必須)
+    DARK_FRAME_SHOOTING,            // 6b. ダークフレーム撮影実行 (必須)
     SETUP_COMPLETED                 // 6c. 撮影前設定完了
 }
 
@@ -265,9 +262,6 @@ private fun MainAppContent() {
     // 選択された撮影解像度/クロップサイズ (デフォルト フルHD)
     var selectedResolution by remember { mutableStateOf(CaptureResolution.FHD) }
 
-    // ダークフレーム使用フラグ (デフォルト true)
-    var useDarkFrame by remember { mutableStateOf(true) }
-
     // ステータスメッセージ
     var statusMessage by remember {
         mutableStateOf("露出時間・画質を選択し、シャッターボタンを押してください。")
@@ -339,17 +333,12 @@ private fun MainAppContent() {
         }
     }
 
-    // インターバル撮影ループ関数 (残り枚数カウントダウン方式・限界高速化版)
+    // インターバル撮影ループ関数
     fun startIntervalShootingLoop() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
             return
         }
-
-        // ★ スタート時点で1度だけ残り撮影可能枚数を計算
-        val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
-        val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
-        var currentRemainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
 
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
 
@@ -363,10 +352,9 @@ private fun MainAppContent() {
 
             while (isIntervalShootingActive) {
                 shotCount++
-                if (currentRemainingShots > 0) currentRemainingShots--
 
-                // ディスクI/Oを一切行わず、カウントダウン表示のみで高速化
-                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残り撮影可能: 約${currentRemainingShots}枚]"
+                val storageStr = StorageHelper.getFormattedAvailableStorage(context)
+                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残容量: $storageStr]"
 
                 val success = captureIntervalFrame(imageCapture, shotCount, optimalIso)
                 if (success) {
@@ -387,18 +375,9 @@ private fun MainAppContent() {
                         WorkflowStep.EXPOSURE_SETTING -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
                         WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
                         WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
-                        WorkflowStep.TEST_RESULT_DISPLAY -> {
-                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_NOTICE
-                            else currentStep = WorkflowStep.SETUP_COMPLETED
-                        }
-                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
-                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_NOTICE
-                            else currentStep = WorkflowStep.SETUP_COMPLETED
-                        }
-                        WorkflowStep.DARK_FRAME_NOTICE -> {
-                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_SHOOTING
-                            else currentStep = WorkflowStep.SETUP_COMPLETED
-                        }
+                        WorkflowStep.TEST_RESULT_DISPLAY -> currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                        WorkflowStep.DARK_FRAME_NOTICE -> currentStep = WorkflowStep.DARK_FRAME_SHOOTING
                         WorkflowStep.DARK_FRAME_SHOOTING -> {}
                         WorkflowStep.SETUP_COMPLETED -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
                     }
@@ -498,20 +477,10 @@ private fun MainAppContent() {
                             isProcessing = false
 
                             val statusNotice = if (adjustedIso < optimalIso) "白飛び補正: ISO $adjustedIso" else "ISO $optimalIso"
-
-                            if (useDarkFrame) {
-                                val message = "試写調整完了 ($statusNotice, スコア: $scoreFormatted)。レンズ（カメラ）を覆った状態でシャッターを押してください。"
-                                statusMessage = message
-                                currentStep = WorkflowStep.DARK_FRAME_NOTICE
-                                ttsManager.speak("試写調整が完了しました。レンズを覆って、シャッターを押してください")
-                            } else {
-                                val message = "試写調整完了 ($statusNotice, スコア: $scoreFormatted)。撮影前設定が完了しました！"
-                                statusMessage = message
-                                currentStep = WorkflowStep.SETUP_COMPLETED
-                                isSetupCompleted = true
-                                ttsManager.speak("試写調整が完了しました。インターバル撮影を開始できます")
-                                selectedTab = MainMenuTab.INTERVAL
-                            }
+                            val message = "試写調整完了 ($statusNotice, スコア: $scoreFormatted)。レンズ（カメラ）を覆った状態でシャッターを押してください。"
+                            statusMessage = message
+                            currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                            ttsManager.speak("試写調整が完了しました。レンズを覆って、シャッターを押してください")
                         } else {
                             isProcessing = false
                             statusMessage = "試写画像の取得に失敗しました。"
@@ -582,7 +551,7 @@ private fun MainAppContent() {
     LaunchedEffect(currentStep) {
         when (currentStep) {
             WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> runTestShootingAndAutoAdjust()
-            WorkflowStep.DARK_FRAME_SHOOTING -> if (useDarkFrame) runDarkFrameShooting()
+            WorkflowStep.DARK_FRAME_SHOOTING -> runDarkFrameShooting()
             else -> {}
         }
     }
@@ -657,13 +626,11 @@ private fun MainAppContent() {
                         capturedTestBitmap = capturedTestBitmap,
                         selectedExposureSeconds = selectedExposureSeconds,
                         selectedResolution = selectedResolution,
-                        useDarkFrame = useDarkFrame,
                         isDropdownExpanded = isDropdownExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
                         onExposureChange = { selectedExposureSeconds = it },
                         onResolutionResolutionChange = { selectedResolution = it },
-                        onUseDarkFrameChange = { useDarkFrame = it },
                         onDropdownToggle = { isDropdownExpanded = it },
                         onShutterClick = onTriggerShutter,
                         onCancelSetup = { cancelSetup() },
@@ -693,7 +660,6 @@ private fun MainAppContent() {
                 MainMenuTab.SAVE -> {
                     SaveTabContent(
                         context = context,
-                        useDarkFrame = useDarkFrame,
                         coroutineScope = coroutineScope,
                         ttsManager = ttsManager
                     )
@@ -780,13 +746,11 @@ private fun SetupTabContent(
     capturedTestBitmap: Bitmap?,
     selectedExposureSeconds: Double,
     selectedResolution: CaptureResolution,
-    useDarkFrame: Boolean,
     isDropdownExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
     onExposureChange: (Double) -> Unit,
     onResolutionResolutionChange: (CaptureResolution) -> Unit,
-    onUseDarkFrameChange: (Boolean) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
     onShutterClick: () -> Unit,
     onCancelSetup: () -> Unit,
@@ -893,26 +857,6 @@ private fun SetupTabContent(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(end = 8.dp)
-                    ) {
-                        Checkbox(
-                            checked = useDarkFrame,
-                            onCheckedChange = { if (isChangeable) onUseDarkFrameChange(it) },
-                            enabled = isChangeable,
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = Color(0xFF1E88E5),
-                                uncheckedColor = Color.Gray
-                            )
-                        )
-                        Text(
-                            text = "ダーク撮影",
-                            color = if (isChangeable) Color.White else Color.Gray,
-                            fontSize = 11.sp
-                        )
-                    }
-
                     ExposedDropdownMenuBox(
                         expanded = isDropdownExpanded && isChangeable,
                         onExpandedChange = {
@@ -1175,17 +1119,16 @@ private fun IntervalTabContent(
 @Composable
 private fun SaveTabContent(
     context: android.content.Context,
-    useDarkFrame: Boolean,
     coroutineScope: kotlinx.coroutines.CoroutineScope,
     ttsManager: com.example.astargazer.util.TtsManager
 ) {
     val intervalFiles = remember { StorageHelper.getIntervalImageFiles(context) }
     var isGenerating by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
-    var lastExportedFile by remember { mutableStateOf<java.io.File?>(null) }
+    var lastExportedFile by remember { mutableStateOf<File?>(null) }
     var exportStatusMessage by remember {
         mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存するファイル形式を選択してください。"
+            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存するファイル形式を選択してください。(ダークフレーム自動減算適用)"
             else "保存可能な撮影済み画像がありません。"
         )
     }
@@ -1195,12 +1138,11 @@ private fun SaveTabContent(
         if (intervalFiles.isEmpty()) return
         isGenerating = true
         progress = 0f
-        val darkMsg = if (useDarkFrame) " (ダークフレーム自動減算適用)" else ""
-        exportStatusMessage = "タイムラプス動画(*.mp4)を生成中$darkMsg..."
+        exportStatusMessage = "タイムラプス動画(*.mp4)を生成中 (ダークフレーム自動減算適用)..."
 
         coroutineScope.launch(Dispatchers.IO) {
             val outputFile = StorageHelper.getTimelapseVideoFile(context)
-            val darkFrameFile = if (useDarkFrame) StorageHelper.getDarkFrameFile(context) else null
+            val darkFrameFile = StorageHelper.getDarkFrameFile(context)
 
             val success = VideoEncoderHelper.createTimelapseVideo(
                 imageFiles = intervalFiles,
@@ -1231,12 +1173,11 @@ private fun SaveTabContent(
         if (intervalFiles.isEmpty()) return
         isGenerating = true
         progress = 0f
-        val darkMsg = if (useDarkFrame) " (ダークフレーム自動減算適用)" else ""
-        exportStatusMessage = "比較明合成静止画(*.jpg)を生成中$darkMsg..."
+        exportStatusMessage = "比較明合成静止画(*.jpg)を生成中 (ダークフレーム自動減算適用)..."
 
         coroutineScope.launch(Dispatchers.IO) {
             val outputFile = StorageHelper.getCompositeImageFile(context)
-            val darkFrameFile = if (useDarkFrame) StorageHelper.getDarkFrameFile(context) else null
+            val darkFrameFile = StorageHelper.getDarkFrameFile(context)
 
             val success = ImageCompositor.createLightenBlendComposite(
                 imageFiles = intervalFiles,
