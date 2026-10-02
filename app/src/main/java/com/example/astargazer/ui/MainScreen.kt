@@ -339,12 +339,17 @@ private fun MainAppContent() {
         }
     }
 
-    // インターバル撮影ループ関数 (ノンストップ限界高速化版)
+    // インターバル撮影ループ関数 (残り枚数カウントダウン方式・限界高速化版)
     fun startIntervalShootingLoop() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
             return
         }
+
+        // ★ スタート時点で1度だけ残り撮影可能枚数を計算
+        val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
+        val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
+        var currentRemainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
 
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
 
@@ -358,14 +363,10 @@ private fun MainAppContent() {
 
             while (isIntervalShootingActive) {
                 shotCount++
+                if (currentRemainingShots > 0) currentRemainingShots--
 
-                // 画面ステータス更新の軽量化 (ストレージ容量計算は10コマに1回のみ)
-                if (shotCount == 1 || shotCount % 10 == 0) {
-                    val storageStr = StorageHelper.getFormattedAvailableStorage(context)
-                    statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残容量: $storageStr]"
-                } else {
-                    statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚]"
-                }
+                // ディスクI/Oを一切行わず、カウントダウン表示のみで高速化
+                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残り撮影可能: 約${currentRemainingShots}枚]"
 
                 val success = captureIntervalFrame(imageCapture, shotCount, optimalIso)
                 if (success) {
@@ -373,8 +374,6 @@ private fun MainAppContent() {
                 } else {
                     Log.w("MainScreen", "Failed to capture frame $shotCount")
                 }
-
-                // ウェイトを完全に廃止し、カメラの準備ができ次第即座に次の撮影へ移行 (ノーウェイト連写)
             }
         }
     }
