@@ -17,6 +17,7 @@ import androidx.camera.core.ImageProxy
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +56,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
@@ -88,6 +90,7 @@ import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.StorageHelper
 import com.example.astargazer.util.VideoEncoderHelper
+import com.example.astargazer.util.VoiceCommandManager
 import com.example.astargazer.util.rememberTtsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -108,9 +111,20 @@ val EXPOSURE_TIMES_SECONDS = listOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
  * 撮影解像度/クロップサイズの選択肢
  */
 enum class CaptureResolution(val label: String, val shortLabel: String, val width: Int, val height: Int) {
-    FULL("最大画質 (センサー解像度)", "最大画質", 0, 0),
     FHD("フルHD (1920×1080 / 16:9)", "フルHD 1080p", 1920, 1080),
-    HD("HD画質 (1280×720 / 16:9)", "HD 720p", 1280, 720)
+    FULL("最大画質 (センサー解像度)", "最大画質", 0, 0),
+    HD("HD画質 (1280×720 / 16:9)", "HD 720p", 1280, 720);
+
+    /**
+     * 横スワイプ用ループ順序: フルHD -> 最大画質 -> HD -> フルHD
+     */
+    fun next(): CaptureResolution {
+        return when (this) {
+            FHD -> FULL
+            FULL -> HD
+            HD -> FHD
+        }
+    }
 }
 
 /**
@@ -151,36 +165,42 @@ enum class WorkflowStep {
 fun MainScreen() {
     val context = LocalContext.current
 
-    // カメラパーミッション状態
+    // カメラおよび録音（音声コマンド用）パーミッション状態
     var hasCameraPermission by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         )
     }
 
-    val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        hasCameraPermission = isGranted
+    var hasAudioPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        hasCameraPermission = permissions[Manifest.permission.CAMERA] ?: hasCameraPermission
+        hasAudioPermission = permissions[Manifest.permission.RECORD_AUDIO] ?: hasAudioPermission
     }
 
     LaunchedEffect(Unit) {
-        if (!hasCameraPermission) {
-            launcher.launch(Manifest.permission.CAMERA)
+        if (!hasCameraPermission || !hasAudioPermission) {
+            permissionLauncher.launch(
+                arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+            )
         }
     }
 
     if (!hasCameraPermission) {
-        // パーミッション未許可画面
         PermissionRequestContent {
-            launcher.launch(Manifest.permission.CAMERA)
+            permissionLauncher.launch(
+                arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+            )
         }
     } else {
-        // メインコンテンツ
-        MainAppContent()
+        MainAppContent(hasAudioPermission = hasAudioPermission)
     }
 }
 
@@ -198,7 +218,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "カメラのアクセス権限が必要です",
+                text = "カメラおよびマイクの権限が必要です",
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -206,7 +226,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "星空の試写およびインターバル撮影を行うため、カメラ機能を使用します。",
+                text = "星空撮影および音声操作（「とります」でのシャッター起動）に使用します。",
                 color = Color.LightGray,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
@@ -214,9 +234,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
             Button(
                 onClick = onRequestPermission,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF1E88E5)
-                )
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
             ) {
                 Text(text = "権限を許可する", color = Color.White)
             }
@@ -226,7 +244,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalCamera2Interop::class)
 @Composable
-private fun MainAppContent() {
+private fun MainAppContent(hasAudioPermission: Boolean) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val ttsManager = rememberTtsManager()
@@ -257,16 +275,73 @@ private fun MainAppContent() {
     var selectedExposureSeconds by remember { mutableDoubleStateOf(4.0) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
 
-    // 選択された撮影解像度/クロップサイズ (デフォルト HD画質)
-    var selectedResolution by remember { mutableStateOf(CaptureResolution.HD) }
-    var isResolutionMenuExpanded by remember { mutableStateOf(false) }
+    // ★ 選択された撮影解像度/クロップサイズ (デフォルト フルHD)
+    var selectedResolution by remember { mutableStateOf(CaptureResolution.FHD) }
 
     // ★ ダークフレーム使用フラグ (デフォルト true)
     var useDarkFrame by remember { mutableStateOf(true) }
 
     // ステータスメッセージ
     var statusMessage by remember {
-        mutableStateOf("露出時間・画質を選択し、開始ボタンを押してください。")
+        mutableStateOf("露出時間を選択し、開始ボタンを押すか「とります」と話してください。")
+    }
+
+    // 主シャッターボタン押下アクション（ボタンクリック＆音声コマンド共通）
+    val onTriggerShutter: () -> Unit = {
+        if (!isProcessing) {
+            when (selectedTab) {
+                MainMenuTab.SETUP -> {
+                    when (currentStep) {
+                        WorkflowStep.EXPOSURE_SETTING -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
+                        WorkflowStep.TEST_RESULT_DISPLAY -> {
+                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                            else currentStep = WorkflowStep.SETUP_COMPLETED
+                        }
+                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
+                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                            else currentStep = WorkflowStep.SETUP_COMPLETED
+                        }
+                        WorkflowStep.DARK_FRAME_NOTICE -> {
+                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_SHOOTING
+                            else currentStep = WorkflowStep.SETUP_COMPLETED
+                        }
+                        WorkflowStep.DARK_FRAME_SHOOTING -> {}
+                        WorkflowStep.SETUP_COMPLETED -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+                    }
+                }
+                MainMenuTab.INTERVAL -> {
+                    if (isIntervalShootingActive) {
+                        isIntervalShootingActive = false
+                        if (shotCount > 0) isIntervalCompleted = true
+                        statusMessage = "インターバル撮影を正常停止しました。(合計: ${shotCount}枚)"
+                        ttsManager.speak("インターバル撮影を終了しました")
+                    } else {
+                        // ループスタート
+                    }
+                }
+                MainMenuTab.SAVE -> {}
+            }
+        }
+    }
+
+    // ★ 音声コマンド認識マネージャーのリスニング制御
+    val voiceCommandManager = remember {
+        VoiceCommandManager(context) {
+            coroutineScope.launch(Dispatchers.Main) {
+                onTriggerShutter()
+            }
+        }
+    }
+
+    DisposableEffect(hasAudioPermission) {
+        if (hasAudioPermission) {
+            voiceCommandManager.startListening()
+        }
+        onDispose {
+            voiceCommandManager.stopListening()
+        }
     }
 
     // 必要に応じて画像をクロップ・リサイズして指定ファイルに書き込む共通関数
@@ -318,14 +393,12 @@ private fun MainAppContent() {
                 executor,
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        // アノテーション・クロップ処理
                         if (selectedResolution != CaptureResolution.FULL) {
                             processAndSaveFile(outputFile, outputFile)
                         } else {
                             FileViewerHelper.scanFile(context, outputFile)
                         }
 
-                        // Exif メタデータ (日時, ISO, 露出時間, 機種名, 焦点距離) を自動記録
                         com.example.astargazer.util.ExifHelper.saveExifAttributes(
                             file = outputFile,
                             iso = iso,
@@ -390,17 +463,6 @@ private fun MainAppContent() {
 
                 delay(100L)
             }
-        }
-    }
-
-    // インターバル撮影完了/正常停止処理
-    fun stopIntervalShooting() {
-        if (isIntervalShootingActive) {
-            isIntervalShootingActive = false
-            if (shotCount > 0) isIntervalCompleted = true
-            val msg = "インターバル撮影を正常停止しました。(合計撮影数: ${shotCount}枚)"
-            statusMessage = msg
-            ttsManager.speak("インターバル撮影を終了しました")
         }
     }
 
@@ -551,58 +613,12 @@ private fun MainAppContent() {
         )
     }
 
-    // 撮影前設定のステップ変更処理
-    fun updateSetupStep(newStep: WorkflowStep) {
-        currentStep = newStep
-        when (newStep) {
-            WorkflowStep.EXPOSURE_SETTING -> {
-                val message = "露出時間を選択し、北極星に合わせてシャッターを押してください。"
-                statusMessage = message
-                ttsManager.speak("北極星に合わせてシャッターを押してください")
-            }
-            WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> {
-                val message = "北極星に合わせてシャッターを押してください"
-                statusMessage = message
-                ttsManager.speak(message)
-            }
-            WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {
-                runTestShootingAndAutoAdjust()
-            }
-            WorkflowStep.TEST_RESULT_DISPLAY -> {
-                // 試写結果表示中
-            }
-            WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
-                val message = "撮影したい方向を決めて、シャッターを押してください"
-                statusMessage = message
-                ttsManager.speak(message)
-            }
-            WorkflowStep.DARK_FRAME_NOTICE -> {
-                if (useDarkFrame) {
-                    val message = "レンズを覆って、シャッターを押してください"
-                    statusMessage = "ダークフレーム撮影準備: レンズ（カメラ）を覆った状態でシャッターを押してください。"
-                    ttsManager.speak(message)
-                } else {
-                    currentStep = WorkflowStep.SETUP_COMPLETED
-                    isSetupCompleted = true
-                    statusMessage = "撮影前設定が完了しました！インターバル撮影を開始できます。"
-                    selectedTab = MainMenuTab.INTERVAL
-                }
-            }
-            WorkflowStep.DARK_FRAME_SHOOTING -> {
-                if (useDarkFrame) {
-                    runDarkFrameShooting()
-                } else {
-                    currentStep = WorkflowStep.SETUP_COMPLETED
-                    isSetupCompleted = true
-                    statusMessage = "撮影前設定が完了しました！インターバル撮影を開始できます。"
-                    selectedTab = MainMenuTab.INTERVAL
-                }
-            }
-            WorkflowStep.SETUP_COMPLETED -> {
-                isSetupCompleted = true
-                statusMessage = "撮影前設定が完了しました！インターバル撮影を開始できます。"
-                selectedTab = MainMenuTab.INTERVAL
-            }
+    // ステップ進行の監視
+    LaunchedEffect(currentStep) {
+        when (currentStep) {
+            WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> runTestShootingAndAutoAdjust()
+            WorkflowStep.DARK_FRAME_SHOOTING -> if (useDarkFrame) runDarkFrameShooting()
+            else -> {}
         }
     }
 
@@ -678,15 +694,13 @@ private fun MainAppContent() {
                         selectedResolution = selectedResolution,
                         useDarkFrame = useDarkFrame,
                         isDropdownExpanded = isDropdownExpanded,
-                        isResolutionMenuExpanded = isResolutionMenuExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
                         onExposureChange = { selectedExposureSeconds = it },
-                        onResolutionChange = { selectedResolution = it },
+                        onResolutionResolutionChange = { selectedResolution = it },
                         onUseDarkFrameChange = { useDarkFrame = it },
                         onDropdownToggle = { isDropdownExpanded = it },
-                        onResolutionMenuToggle = { isResolutionMenuExpanded = it },
-                        onStepTrigger = { updateSetupStep(it) },
+                        onShutterClick = onTriggerShutter,
                         onCancelSetup = { cancelSetup() },
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
@@ -703,7 +717,15 @@ private fun MainAppContent() {
                         selectedResolution = selectedResolution,
                         statusMessage = statusMessage,
                         onStartInterval = { startIntervalShootingLoop() },
-                        onStopInterval = { stopIntervalShooting() },
+                        onStopInterval = {
+                            if (isIntervalShootingActive) {
+                                isIntervalShootingActive = false
+                                if (shotCount > 0) isIntervalCompleted = true
+                                statusMessage = "インターバル撮影を正常停止しました。(合計: ${shotCount}枚)"
+                                ttsManager.speak("インターバル撮影を終了しました")
+                            }
+                        },
+                        onResolutionResolutionChange = { selectedResolution = it },
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
                             imageCaptureInstance = imageCapture
@@ -740,7 +762,7 @@ private fun CropGuideOverlay(
 
         if (width <= 0f || height <= 0f) return@BoxWithConstraints
 
-        // ★ 画質・解像度ごとの画面占有スケール比率 (フルHD: 85%, HD: 65%)
+        // 画質・解像度ごとの画面占有スケール比率 (フルHD: 85%, HD: 65%)
         val scale = if (selectedResolution == CaptureResolution.FHD) 0.85f else 0.65f
 
         val maxCropWidth: Float
@@ -807,24 +829,24 @@ private fun SetupTabContent(
     selectedResolution: CaptureResolution,
     useDarkFrame: Boolean,
     isDropdownExpanded: Boolean,
-    isResolutionMenuExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
     onExposureChange: (Double) -> Unit,
-    onResolutionChange: (CaptureResolution) -> Unit,
+    onResolutionResolutionChange: (CaptureResolution) -> Unit,
     onUseDarkFrameChange: (Boolean) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
-    onResolutionMenuToggle: (Boolean) -> Unit,
-    onStepTrigger: (WorkflowStep) -> Unit,
+    onShutterClick: () -> Unit,
     onCancelSetup: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
     var totalDragY by remember { mutableFloatStateOf(0f) }
+    var totalDragX by remember { mutableFloatStateOf(0f) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(Unit) {
+                // 上スワイプ（キャンセル）の検出
                 detectVerticalDragGestures(
                     onDragStart = { totalDragY = 0f },
                     onDragEnd = {
@@ -835,6 +857,21 @@ private fun SetupTabContent(
                     onVerticalDrag = { change, dragAmount ->
                         change.consume()
                         totalDragY += dragAmount
+                    }
+                )
+            }
+            .pointerInput(selectedResolution) {
+                // ★ 左右スワイプ（画質・クロップ範囲の順次切替: フルHD -> 最大画質 -> HD）の検出
+                detectHorizontalDragGestures(
+                    onDragStart = { totalDragX = 0f },
+                    onDragEnd = {
+                        if (kotlin.math.abs(totalDragX) > 80f) {
+                            onResolutionResolutionChange(selectedResolution.next())
+                        }
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragX += dragAmount
                     }
                 )
             }
@@ -856,12 +893,13 @@ private fun SetupTabContent(
             CropGuideOverlay(selectedResolution = selectedResolution)
         }
 
+        // ★ ヘッダー（見切れ解消レイアウト）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .background(Color.Black.copy(alpha = 0.60f))
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .background(Color.Black.copy(alpha = 0.65f))
+                .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -872,23 +910,63 @@ private fun SetupTabContent(
                     Text(
                         text = "AStargazer",
                         color = Color.White,
-                        fontSize = 16.sp,
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "↑ 上スワイプでキャンセル",
+                        text = "← 横スワイプでクロップ切替 | ↑ 上スワイプでキャンセル",
                         color = Color(0xFFFF8A80),
-                        fontSize = 10.sp
+                        fontSize = 9.sp
                     )
                 }
 
-                val isChangeable = currentStep == WorkflowStep.EXPOSURE_SETTING
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // ★ ダークフレーム使用フラグ チェックボックス
+                // ★ 🎤 音声操作案内バッジ
+                Surface(
+                    color = Color(0xFF1E88E5).copy(alpha = 0.25f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(end = 4.dp)
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "🎙 「とります」でシャッター",
+                            color = Color(0xFF64B5F6),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val isChangeable = currentStep == WorkflowStep.EXPOSURE_SETTING
+
+            // ★ 2行目設定コントロール（広々とゆったり配置し見切れを防止）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // 画質表示バッジ（横スワイプでの切り替えを案内）
+                Surface(
+                    color = Color.DarkGray.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = "画質: ${selectedResolution.shortLabel} ↔",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // ダーク撮影チェックボックス
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(end = 8.dp)
                     ) {
                         Checkbox(
                             checked = useDarkFrame,
@@ -896,69 +974,17 @@ private fun SetupTabContent(
                             enabled = isChangeable,
                             colors = CheckboxDefaults.colors(
                                 checkedColor = Color(0xFF1E88E5),
-                                uncheckedColor = Color.Gray,
-                                disabledCheckedColor = Color.DarkGray,
-                                disabledUncheckedColor = Color.DarkGray
+                                uncheckedColor = Color.Gray
                             )
                         )
                         Text(
                             text = "ダーク撮影",
                             color = if (isChangeable) Color.White else Color.Gray,
-                            fontSize = 10.sp
+                            fontSize = 11.sp
                         )
                     }
 
-                    // クロップ画質/サイズドロップダウン
-                    ExposedDropdownMenuBox(
-                        expanded = isResolutionMenuExpanded && isChangeable,
-                        onExpandedChange = {
-                            if (isChangeable) onResolutionMenuToggle(!isResolutionMenuExpanded)
-                        }
-                    ) {
-                        OutlinedTextField(
-                            value = selectedResolution.shortLabel,
-                            onValueChange = {},
-                            readOnly = true,
-                            enabled = isChangeable,
-                            label = { Text("画質・サイズ", color = Color.LightGray, fontSize = 9.sp) },
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = isResolutionMenuExpanded && isChangeable)
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                disabledTextColor = Color.LightGray,
-                                focusedBorderColor = Color(0xFF1E88E5),
-                                unfocusedBorderColor = Color.Gray,
-                                disabledBorderColor = Color.DarkGray,
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                disabledContainerColor = Color.Transparent
-                            ),
-                            modifier = Modifier
-                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                                .width(110.dp)
-                        )
-
-                        ExposedDropdownMenu(
-                            expanded = isResolutionMenuExpanded && isChangeable,
-                            onDismissRequest = { onResolutionMenuToggle(false) }
-                        ) {
-                            CaptureResolution.entries.forEach { res ->
-                                DropdownMenuItem(
-                                    text = { Text(res.label, color = Color.White, fontSize = 12.sp) },
-                                    onClick = {
-                                        onResolutionChange(res)
-                                        onResolutionMenuToggle(false)
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    // 露出時間ドロップダウン
+                    // ★ 見切れ解消された 露出時間ドロップダウン
                     ExposedDropdownMenuBox(
                         expanded = isDropdownExpanded && isChangeable,
                         onExpandedChange = {
@@ -987,7 +1013,7 @@ private fun SetupTabContent(
                             ),
                             modifier = Modifier
                                 .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                                .width(85.dp)
+                                .width(95.dp)
                         )
 
                         ExposedDropdownMenu(
@@ -1059,33 +1085,11 @@ private fun SetupTabContent(
             contentAlignment = Alignment.Center
         ) {
             Button(
-                onClick = {
-                    when (currentStep) {
-                        WorkflowStep.EXPOSURE_SETTING -> onStepTrigger(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
-                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> onStepTrigger(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
-                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
-                        WorkflowStep.TEST_RESULT_DISPLAY -> {
-                            if (useDarkFrame) onStepTrigger(WorkflowStep.DARK_FRAME_NOTICE)
-                            else onStepTrigger(WorkflowStep.SETUP_COMPLETED)
-                        }
-                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
-                            if (useDarkFrame) onStepTrigger(WorkflowStep.DARK_FRAME_NOTICE)
-                            else onStepTrigger(WorkflowStep.SETUP_COMPLETED)
-                        }
-                        WorkflowStep.DARK_FRAME_NOTICE -> {
-                            if (useDarkFrame) onStepTrigger(WorkflowStep.DARK_FRAME_SHOOTING)
-                            else onStepTrigger(WorkflowStep.SETUP_COMPLETED)
-                        }
-                        WorkflowStep.DARK_FRAME_SHOOTING -> {}
-                        WorkflowStep.SETUP_COMPLETED -> onStepTrigger(WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST)
-                    }
-                },
+                onClick = onShutterClick,
                 enabled = !isProcessing,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.Red
-                ),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
                 contentPadding = PaddingValues(0.dp)
             ) {
                 Box(
@@ -1117,35 +1121,73 @@ private fun IntervalTabContent(
     statusMessage: String,
     onStartInterval: () -> Unit,
     onStopInterval: () -> Unit,
+    onResolutionResolutionChange: (CaptureResolution) -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
+    var totalDragX by remember { mutableFloatStateOf(0f) }
+
     Box(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(selectedResolution) {
+                detectHorizontalDragGestures(
+                    onDragStart = { totalDragX = 0f },
+                    onDragEnd = {
+                        if (kotlin.math.abs(totalDragX) > 80f && !isIntervalActive) {
+                            onResolutionResolutionChange(selectedResolution.next())
+                        }
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragX += dragAmount
+                    }
+                )
+            }
     ) {
         CameraPreview(
             modifier = Modifier.fillMaxSize(),
             onCameraBound = onCameraBound
         )
 
-        // ★ クロップ枠線オーバーレイ描画
+        // クロップ枠線オーバーレイ描画
         CropGuideOverlay(selectedResolution = selectedResolution)
 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .background(Color.Black.copy(alpha = 0.6f))
+                .background(Color.Black.copy(alpha = 0.65f))
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "AStargazer - インターバル撮影",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Surface(
+                    color = Color(0xFF1E88E5).copy(alpha = 0.25f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "🎙 「とります」で停止/開始",
+                        color = Color(0xFF64B5F6),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "AStargazer - インターバル撮影",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 画質: ${selectedResolution.shortLabel} | 撮影数: ${shotCount}コマ",
+                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 画質: ${selectedResolution.shortLabel} ↔ | 撮影数: ${shotCount}コマ",
                 color = Color.LightGray,
                 fontSize = 12.sp
             )
