@@ -313,7 +313,7 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
         }
     }
 
-    // 単発撮影用サスペンド関数（インターバル撮影の1コマ分）
+    // ★ 単発撮影用サスペンド関数（インターバル撮影の1コマ分）- 次コマを待たせない非同期爆速化
     suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
         return suspendCancellableCoroutine { continuation ->
             val outputFile = StorageHelper.createIntervalImageFile(context, index)
@@ -325,19 +325,27 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                 executor,
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        if (selectedResolution != CaptureResolution.FULL) {
-                            processAndSaveFile(outputFile, outputFile)
-                        } else {
-                            FileViewerHelper.scanFile(context, outputFile)
-                        }
-
-                        com.example.astargazer.util.ExifHelper.saveExifAttributes(
-                            file = outputFile,
-                            iso = iso,
-                            exposureSeconds = selectedExposureSeconds
-                        )
-
+                        // ★1. 次のコマの撮影を開始させるため即座にカメラ待機を解放！
                         if (continuation.isActive) continuation.resume(true)
+
+                        // ★2. 重い画像処理（16:9クロップ・JPEG再圧縮・Exif書込み）はIOスレッドで非同期並列実行
+                        coroutineScope.launch(Dispatchers.IO) {
+                            try {
+                                if (selectedResolution != CaptureResolution.FULL) {
+                                    processAndSaveFile(outputFile, outputFile)
+                                } else {
+                                    FileViewerHelper.scanFile(context, outputFile)
+                                }
+
+                                com.example.astargazer.util.ExifHelper.saveExifAttributes(
+                                    file = outputFile,
+                                    iso = iso,
+                                    exposureSeconds = selectedExposureSeconds
+                                )
+                            } catch (e: Exception) {
+                                Log.e("MainScreen", "Background post-process failed for $index", e)
+                            }
+                        }
                     }
 
                     override fun onError(exception: ImageCaptureException) {
@@ -349,7 +357,7 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
         }
     }
 
-    // インターバル撮影ループ関数
+    // インターバル撮影ループ関数 (高速化最適化版)
     fun startIntervalShootingLoop() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
@@ -369,22 +377,24 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
             ttsManager.speak(startMsg)
 
             while (isIntervalShootingActive) {
-                val currentStorageBytes = StorageHelper.getAvailableStorageBytes(context)
-
-                if (currentStorageBytes <= minAllowedStorageBytes) {
-                    isIntervalShootingActive = false
-                    isIntervalCompleted = shotCount > 0
-                    val stopMsg = "空き容量の50%に達したため、撮影を自動終了しました。(合計: ${shotCount}枚)"
-                    statusMessage = stopMsg
-                    ttsManager.speak("撮影上限容量に達したためインターバル撮影を終了しました")
-                    break
+                // ★ ストレージ空き容量の確認は重いため 10コマに1回に頻度を削減して高速化
+                if (shotCount % 10 == 0) {
+                    val currentStorageBytes = StorageHelper.getAvailableStorageBytes(context)
+                    if (currentStorageBytes <= minAllowedStorageBytes) {
+                        isIntervalShootingActive = false
+                        isIntervalCompleted = shotCount > 0
+                        val stopMsg = "空き容量の50%に達したため、撮影を自動終了しました。(合計: ${shotCount}枚)"
+                        statusMessage = stopMsg
+                        ttsManager.speak("撮影上限容量に達したためインターバル撮影を終了しました")
+                        break
+                    }
                 }
 
                 shotCount++
 
-                val remainingShots = StorageHelper.calculateRemainingShots(currentStorageBytes, minAllowedStorageBytes)
+                // 残り枚数の概算表示（軽量化のためキャッシュ値を使用）
                 val storageStr = StorageHelper.getFormattedAvailableStorage(context)
-                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残り撮影可能: 約${remainingShots}枚 / 残容量: $storageStr]"
+                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残容量: $storageStr]"
 
                 val success = captureIntervalFrame(imageCapture, shotCount, optimalIso)
                 if (success) {
@@ -393,7 +403,9 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                     Log.w("MainScreen", "Failed to capture frame $shotCount")
                 }
 
-                delay(100L)
+                // 露出時間に応じた最適な最小ギャップ (0.25秒等の場合は極力ウェイトを短縮)
+                val gapDelay = if (selectedExposureSeconds <= 0.5) 20L else 100L
+                delay(gapDelay)
             }
         }
     }
