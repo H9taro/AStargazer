@@ -17,7 +17,6 @@ import androidx.camera.core.ImageProxy
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -259,10 +258,6 @@ private fun MainAppContent() {
     // 選択された撮影解像度/クロップサイズ (デフォルト HD画質)
     var selectedResolution by remember { mutableStateOf(CaptureResolution.HD) }
     var isResolutionMenuExpanded by remember { mutableStateOf(false) }
-
-    // ★ 仕様追加: 選択されたカメラセンサー (標準カメラ vs 超広角カメラ)
-    var selectedSensorType by remember { mutableStateOf(com.example.astargazer.ui.camera.CameraSensorType.STANDARD) }
-    var isSensorMenuExpanded by remember { mutableStateOf(false) }
 
     // ステータスメッセージ
     var statusMessage by remember {
@@ -652,18 +647,14 @@ private fun MainAppContent() {
                         capturedTestBitmap = capturedTestBitmap,
                         selectedExposureSeconds = selectedExposureSeconds,
                         selectedResolution = selectedResolution,
-                        selectedSensorType = selectedSensorType,
                         isDropdownExpanded = isDropdownExpanded,
                         isResolutionMenuExpanded = isResolutionMenuExpanded,
-                        isSensorMenuExpanded = isSensorMenuExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
                         onExposureChange = { selectedExposureSeconds = it },
                         onResolutionChange = { selectedResolution = it },
-                        onSensorTypeChange = { selectedSensorType = it },
                         onDropdownToggle = { isDropdownExpanded = it },
                         onResolutionMenuToggle = { isResolutionMenuExpanded = it },
-                        onSensorMenuToggle = { isSensorMenuExpanded = it },
                         onStepTrigger = { updateSetupStep(it) },
                         onCancelSetup = { cancelSetup() },
                         onCameraBound = { camera, imageCapture ->
@@ -679,7 +670,6 @@ private fun MainAppContent() {
                         shotCount = shotCount,
                         selectedExposureSeconds = selectedExposureSeconds,
                         selectedResolution = selectedResolution,
-                        selectedSensorType = selectedSensorType,
                         statusMessage = statusMessage,
                         onStartInterval = { startIntervalShootingLoop() },
                         onStopInterval = { stopIntervalShooting() },
@@ -788,18 +778,14 @@ private fun SetupTabContent(
     capturedTestBitmap: Bitmap?,
     selectedExposureSeconds: Double,
     selectedResolution: CaptureResolution,
-    selectedSensorType: com.example.astargazer.ui.camera.CameraSensorType,
     isDropdownExpanded: Boolean,
     isResolutionMenuExpanded: Boolean,
-    isSensorMenuExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
     onExposureChange: (Double) -> Unit,
     onResolutionChange: (CaptureResolution) -> Unit,
-    onSensorTypeChange: (com.example.astargazer.ui.camera.CameraSensorType) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
     onResolutionMenuToggle: (Boolean) -> Unit,
-    onSensorMenuToggle: (Boolean) -> Unit,
     onStepTrigger: (WorkflowStep) -> Unit,
     onCancelSetup: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
@@ -834,7 +820,6 @@ private fun SetupTabContent(
         } else {
             CameraPreview(
                 modifier = Modifier.fillMaxSize(),
-                sensorType = selectedSensorType,
                 onCameraBound = onCameraBound
             )
 
@@ -871,56 +856,6 @@ private fun SetupTabContent(
                 val isChangeable = currentStep == WorkflowStep.EXPOSURE_SETTING
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // ★ カメラセンサー選択ドロップダウン (標準 vs 超広角)
-                    ExposedDropdownMenuBox(
-                        expanded = isSensorMenuExpanded && isChangeable,
-                        onExpandedChange = {
-                            if (isChangeable) onSensorMenuToggle(!isSensorMenuExpanded)
-                        }
-                    ) {
-                        OutlinedTextField(
-                            value = selectedSensorType.shortLabel,
-                            onValueChange = {},
-                            readOnly = true,
-                            enabled = isChangeable,
-                            label = { Text("カメラ", color = Color.LightGray, fontSize = 9.sp) },
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = isSensorMenuExpanded && isChangeable)
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                disabledTextColor = Color.LightGray,
-                                focusedBorderColor = Color(0xFF1E88E5),
-                                unfocusedBorderColor = Color.Gray,
-                                disabledBorderColor = Color.DarkGray,
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                disabledContainerColor = Color.Transparent
-                            ),
-                            modifier = Modifier
-                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                                .width(90.dp)
-                        )
-
-                        ExposedDropdownMenu(
-                            expanded = isSensorMenuExpanded && isChangeable,
-                            onDismissRequest = { onSensorMenuToggle(false) }
-                        ) {
-                            com.example.astargazer.ui.camera.CameraSensorType.entries.forEach { sensor ->
-                                DropdownMenuItem(
-                                    text = { Text(sensor.label, color = Color.White, fontSize = 12.sp) },
-                                    onClick = {
-                                        onSensorTypeChange(sensor)
-                                        onSensorMenuToggle(false)
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(4.dp))
-
                     // クロップ画質/サイズドロップダウン
                     ExposedDropdownMenuBox(
                         expanded = isResolutionMenuExpanded && isChangeable,
@@ -950,7 +885,7 @@ private fun SetupTabContent(
                             ),
                             modifier = Modifier
                                 .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                                .width(110.dp)
+                                .width(120.dp)
                         )
 
                         ExposedDropdownMenu(
@@ -1118,7 +1053,6 @@ private fun IntervalTabContent(
     shotCount: Int,
     selectedExposureSeconds: Double,
     selectedResolution: CaptureResolution,
-    selectedSensorType: com.example.astargazer.ui.camera.CameraSensorType,
     statusMessage: String,
     onStartInterval: () -> Unit,
     onStopInterval: () -> Unit,
@@ -1129,7 +1063,6 @@ private fun IntervalTabContent(
     ) {
         CameraPreview(
             modifier = Modifier.fillMaxSize(),
-            sensorType = selectedSensorType,
             onCameraBound = onCameraBound
         )
 
