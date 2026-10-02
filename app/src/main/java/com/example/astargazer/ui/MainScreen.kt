@@ -5,6 +5,7 @@ package com.example.astargazer.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,11 +14,14 @@ import androidx.camera.core.Camera
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -61,8 +65,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -85,6 +93,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import kotlin.coroutines.resume
@@ -93,6 +102,15 @@ import kotlin.coroutines.resume
  * 露出時間の選択肢（秒数: 0.25秒, 0.5秒, 1秒, 2秒, 4秒, 8秒, 15秒, 30秒）
  */
 val EXPOSURE_TIMES_SECONDS = listOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
+
+/**
+ * 撮影解像度/クロップサイズの選択肢
+ */
+enum class CaptureResolution(val label: String, val shortLabel: String, val width: Int, val height: Int) {
+    FULL("最大画質 (センサー解像度)", "最大画質", 0, 0),
+    FHD("フルHD (1920×1080 / 16:9)", "フルHD 1080p", 1920, 1080),
+    HD("HD画質 (1280×720 / 16:9)", "HD 720p", 1280, 720)
+}
 
 /**
  * 露出時間のフォーマット（整数の場合は "1秒", 小数の場合は "0.25秒" など）
@@ -238,9 +256,37 @@ private fun MainAppContent() {
     var selectedExposureSeconds by remember { mutableDoubleStateOf(4.0) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
 
+    // 選択された撮影解像度/クロップサイズ (デフォルト HD画質)
+    var selectedResolution by remember { mutableStateOf(CaptureResolution.HD) }
+    var isResolutionMenuExpanded by remember { mutableStateOf(false) }
+
     // ステータスメッセージ
     var statusMessage by remember {
-        mutableStateOf("露出時間を選択し、開始ボタンを押してください。")
+        mutableStateOf("露出時間・画質を選択し、開始ボタンを押してください。")
+    }
+
+    // 必要に応じて画像をクロップ・リサイズして指定ファイルに書き込む共通関数
+    fun processAndSaveFile(outputFile: File, rawFile: File) {
+        if (selectedResolution == CaptureResolution.FULL) {
+            FileViewerHelper.scanFile(context, rawFile)
+            return
+        }
+
+        try {
+            val srcBitmap = BitmapFactory.decodeFile(rawFile.absolutePath)
+            if (srcBitmap != null) {
+                val cropped = BitmapUtils.cropTo169(srcBitmap, selectedResolution.width, selectedResolution.height)
+                srcBitmap.recycle()
+
+                FileOutputStream(outputFile).use { out ->
+                    cropped.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                }
+                cropped.recycle()
+                FileViewerHelper.scanFile(context, outputFile)
+            }
+        } catch (e: Exception) {
+            Log.e("MainScreen", "Crop/Save failed for ${outputFile.name}", e)
+        }
     }
 
     // 撮影前設定の強制的キャンセル
@@ -256,7 +302,7 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // 単発撮影用サスペンド関数（インターバル撮影の1コマ分：パブリック領域に直接出力＆スキャン＆Exif自動書き込み）
+    // 単発撮影用サスペンド関数（インターバル撮影の1コマ分）
     suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
         return suspendCancellableCoroutine { continuation ->
             val outputFile = StorageHelper.createIntervalImageFile(context, index)
@@ -268,14 +314,20 @@ private fun MainAppContent() {
                 executor,
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        // ★ Exif メタデータ (日時, ISO, 露出時間, 機種名, 焦点距離) を自動記録
+                        // アノテーション・クロップ処理
+                        if (selectedResolution != CaptureResolution.FULL) {
+                            processAndSaveFile(outputFile, outputFile)
+                        } else {
+                            FileViewerHelper.scanFile(context, outputFile)
+                        }
+
+                        // Exif メタデータ (日時, ISO, 露出時間, 機種名, 焦点距離) を自動記録
                         com.example.astargazer.util.ExifHelper.saveExifAttributes(
                             file = outputFile,
                             iso = iso,
                             exposureSeconds = selectedExposureSeconds
                         )
-                        // パブリック領域の各コマ画像を即時メディアスキャン登録
-                        FileViewerHelper.scanFile(context, outputFile)
+
                         if (continuation.isActive) continuation.resume(true)
                     }
 
@@ -303,7 +355,7 @@ private fun MainAppContent() {
         shotCount = 0
 
         coroutineScope.launch {
-            val startMsg = "インターバル撮影を開始しました。(撮影上限: 空き容量の50%)"
+            val startMsg = "インターバル撮影を開始しました。(画質: ${selectedResolution.shortLabel})"
             statusMessage = startMsg
             ttsManager.speak(startMsg)
 
@@ -348,7 +400,7 @@ private fun MainAppContent() {
         }
     }
 
-    // 試写と自動調整の実行関数 (パブリック領域に試写画像を書き出し)
+    // 試写と自動調整の実行関数
     fun runTestShootingAndAutoAdjust() {
         val camera = cameraInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -377,20 +429,32 @@ private fun MainAppContent() {
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
                     coroutineScope.launch {
-                        val bitmap = BitmapUtils.imageProxyToBitmap(image)
+                        var bitmap = BitmapUtils.imageProxyToBitmap(image)
                         image.close()
 
                         if (bitmap != null) {
+                            if (selectedResolution != CaptureResolution.FULL) {
+                                bitmap = BitmapUtils.cropTo169(bitmap, selectedResolution.width, selectedResolution.height)
+                            }
                             capturedTestBitmap = bitmap
+
+                            val testFile = StorageHelper.getTestShootingFile()
+                            try {
+                                FileOutputStream(testFile).use { out ->
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                }
+                                com.example.astargazer.util.ExifHelper.saveExifAttributes(testFile, optimalIso, selectedExposureSeconds)
+                                FileViewerHelper.scanFile(context, testFile)
+                            } catch (e: Exception) {
+                                Log.e("MainScreen", "Failed to save test shooting image", e)
+                            }
 
                             val score = ImageContrastAnalyzer.calculateContrastScore(bitmap)
                             val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
 
-                            // ★ 仕様変更: 試写画像の平均輝度（白飛び率）を自動解析し、ISO感度を自動引き下げアジャスト
                             val avgLuminance = ImageContrastAnalyzer.calculateAverageLuminance(bitmap)
                             val adjustedIso = ImageContrastAnalyzer.adjustIsoForLuminance(optimalIso, avgLuminance)
 
-                            // 白飛び補正でISO感が更新された場合、カメラに即時適用
                             if (adjustedIso != optimalIso) {
                                 CameraControlManager.setManualFocusAndExposure(
                                     camera = camera,
@@ -398,18 +462,6 @@ private fun MainAppContent() {
                                     iso = adjustedIso,
                                     exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
                                 )
-                            }
-
-                            // 試写画像をパブリックフォルダ (Pictures/AStargazer/TestShooting) に保存＆Exif付与
-                            val testFile = StorageHelper.getTestShootingFile()
-                            try {
-                                FileOutputStream(testFile).use { out ->
-                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                                }
-                                com.example.astargazer.util.ExifHelper.saveExifAttributes(testFile, adjustedIso, selectedExposureSeconds)
-                                FileViewerHelper.scanFile(context, testFile)
-                            } catch (e: Exception) {
-                                Log.e("MainScreen", "Failed to save test shooting image", e)
                             }
 
                             isProcessing = false
@@ -435,7 +487,7 @@ private fun MainAppContent() {
         )
     }
 
-    // ダークフレーム撮影実行関数 (パブリック領域にダークフレームを書き出し)
+    // ダークフレーム撮影実行関数
     fun runDarkFrameShooting() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
@@ -455,6 +507,10 @@ private fun MainAppContent() {
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     isProcessing = false
+                    if (selectedResolution != CaptureResolution.FULL) {
+                        processAndSaveFile(darkFrameFile, darkFrameFile)
+                    }
+
                     val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                         file = darkFrameFile,
@@ -591,11 +647,15 @@ private fun MainAppContent() {
                         currentStep = currentStep,
                         capturedTestBitmap = capturedTestBitmap,
                         selectedExposureSeconds = selectedExposureSeconds,
+                        selectedResolution = selectedResolution,
                         isDropdownExpanded = isDropdownExpanded,
+                        isResolutionMenuExpanded = isResolutionMenuExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
                         onExposureChange = { selectedExposureSeconds = it },
+                        onResolutionChange = { selectedResolution = it },
                         onDropdownToggle = { isDropdownExpanded = it },
+                        onResolutionMenuToggle = { isResolutionMenuExpanded = it },
                         onStepTrigger = { updateSetupStep(it) },
                         onCancelSetup = { cancelSetup() },
                         onCameraBound = { camera, imageCapture ->
@@ -610,6 +670,7 @@ private fun MainAppContent() {
                         isIntervalActive = isIntervalShootingActive,
                         shotCount = shotCount,
                         selectedExposureSeconds = selectedExposureSeconds,
+                        selectedResolution = selectedResolution,
                         statusMessage = statusMessage,
                         onStartInterval = { startIntervalShootingLoop() },
                         onStopInterval = { stopIntervalShooting() },
@@ -633,6 +694,82 @@ private fun MainAppContent() {
 }
 
 /**
+ * プレビュー画面上にクロップ切り取り範囲を示す枠線・マスクを描画するコンポーザブル
+ */
+@Composable
+private fun CropGuideOverlay(
+    selectedResolution: CaptureResolution,
+    modifier: Modifier = Modifier
+) {
+    if (selectedResolution == CaptureResolution.FULL) return
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val width = constraints.maxWidth.toFloat()
+        val height = constraints.maxHeight.toFloat()
+
+        if (width <= 0f || height <= 0f) return@BoxWithConstraints
+
+        // 16:9 画角のトリミング領域を画面中央に設定
+        val cropWidth: Float
+        val cropHeight: Float
+
+        if (width * 9f > height * 16f) {
+            cropHeight = height
+            cropWidth = (height * 16f) / 9f
+        } else {
+            cropWidth = width
+            cropHeight = (width * 9f) / 16f
+        }
+
+        val left = (width - cropWidth) / 2f
+        val top = (height - cropHeight) / 2f
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            // クロップ枠外の上下/左右を半透明黒でマスキング
+            val maskColor = Color.Black.copy(alpha = 0.5f)
+
+            if (top > 0) {
+                // 上部マスク
+                drawRect(color = maskColor, topLeft = Offset(0f, 0f), size = Size(width, top))
+                // 下部マスク
+                drawRect(color = maskColor, topLeft = Offset(0f, top + cropHeight), size = Size(width, height - (top + cropHeight)))
+            }
+
+            if (left > 0) {
+                // 左側マスク
+                drawRect(color = maskColor, topLeft = Offset(0f, 0f), size = Size(left, height))
+                // 右側マスク
+                drawRect(color = maskColor, topLeft = Offset(left + cropWidth, 0f), size = Size(width - (left + cropWidth), height))
+            }
+
+            // 16:9 クロップ境界線 (赤い破線ガイド枠)
+            drawRect(
+                color = Color(0xFFFF5252),
+                topLeft = Offset(left, top),
+                size = Size(cropWidth, cropHeight),
+                style = Stroke(
+                    width = 2.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 12f), 0f)
+                )
+            )
+        }
+
+        // ガイドラベル表示
+        Text(
+            text = "✂ クロップ領域 (${selectedResolution.shortLabel})",
+            color = Color(0xFFFF8A80),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = (top / 1.5f).coerceAtLeast(60f).dp)
+                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+
+/**
  * タブ1: 撮影前設定コンテンツ (ステップ1-6)
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -641,11 +778,15 @@ private fun SetupTabContent(
     currentStep: WorkflowStep,
     capturedTestBitmap: Bitmap?,
     selectedExposureSeconds: Double,
+    selectedResolution: CaptureResolution,
     isDropdownExpanded: Boolean,
+    isResolutionMenuExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
     onExposureChange: (Double) -> Unit,
+    onResolutionChange: (CaptureResolution) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
+    onResolutionMenuToggle: (Boolean) -> Unit,
     onStepTrigger: (WorkflowStep) -> Unit,
     onCancelSetup: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
@@ -682,14 +823,17 @@ private fun SetupTabContent(
                 modifier = Modifier.fillMaxSize(),
                 onCameraBound = onCameraBound
             )
+
+            // ★ クロップ枠線オーバーレイ描画
+            CropGuideOverlay(selectedResolution = selectedResolution)
         }
 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
-                .background(Color.Black.copy(alpha = 0.6f))
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .background(Color.Black.copy(alpha = 0.60f))
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -698,7 +842,7 @@ private fun SetupTabContent(
             ) {
                 Column {
                     Text(
-                        text = "AStargazer - 撮影前設定",
+                        text = "AStargazer",
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
@@ -706,57 +850,108 @@ private fun SetupTabContent(
                     Text(
                         text = "↑ 上スワイプでキャンセル",
                         color = Color(0xFFFF8A80),
-                        fontSize = 11.sp
+                        fontSize = 10.sp
                     )
                 }
 
-                val isExposureChangeable = currentStep == WorkflowStep.EXPOSURE_SETTING
+                val isChangeable = currentStep == WorkflowStep.EXPOSURE_SETTING
 
-                ExposedDropdownMenuBox(
-                    expanded = isDropdownExpanded && isExposureChangeable,
-                    onExpandedChange = {
-                        if (isExposureChangeable) {
-                            onDropdownToggle(!isDropdownExpanded)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // クロップ画質/サイズドロップダウン
+                    ExposedDropdownMenuBox(
+                        expanded = isResolutionMenuExpanded && isChangeable,
+                        onExpandedChange = {
+                            if (isChangeable) onResolutionMenuToggle(!isResolutionMenuExpanded)
+                        }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedResolution.shortLabel,
+                            onValueChange = {},
+                            readOnly = true,
+                            enabled = isChangeable,
+                            label = { Text("画質・サイズ", color = Color.LightGray, fontSize = 9.sp) },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = isResolutionMenuExpanded && isChangeable)
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                disabledTextColor = Color.LightGray,
+                                focusedBorderColor = Color(0xFF1E88E5),
+                                unfocusedBorderColor = Color.Gray,
+                                disabledBorderColor = Color.DarkGray,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent
+                            ),
+                            modifier = Modifier
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                                .width(120.dp)
+                        )
+
+                        ExposedDropdownMenu(
+                            expanded = isResolutionMenuExpanded && isChangeable,
+                            onDismissRequest = { onResolutionMenuToggle(false) }
+                        ) {
+                            CaptureResolution.entries.forEach { res ->
+                                DropdownMenuItem(
+                                    text = { Text(res.label, color = Color.White, fontSize = 12.sp) },
+                                    onClick = {
+                                        onResolutionChange(res)
+                                        onResolutionMenuToggle(false)
+                                    }
+                                )
+                            }
                         }
                     }
-                ) {
-                    OutlinedTextField(
-                        value = formatExposureSeconds(selectedExposureSeconds),
-                        onValueChange = {},
-                        readOnly = true,
-                        enabled = isExposureChangeable,
-                        label = { Text("露出時間", color = Color.LightGray, fontSize = 10.sp) },
-                        trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded && isExposureChangeable)
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            disabledTextColor = Color.LightGray,
-                            focusedBorderColor = Color(0xFF1E88E5),
-                            unfocusedBorderColor = Color.Gray,
-                            disabledBorderColor = Color.DarkGray,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent
-                        ),
-                        modifier = Modifier
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                            .width(110.dp)
-                    )
 
-                    ExposedDropdownMenu(
-                        expanded = isDropdownExpanded && isExposureChangeable,
-                        onDismissRequest = { onDropdownToggle(false) }
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    // 露出時間ドロップダウン
+                    ExposedDropdownMenuBox(
+                        expanded = isDropdownExpanded && isChangeable,
+                        onExpandedChange = {
+                            if (isChangeable) onDropdownToggle(!isDropdownExpanded)
+                        }
                     ) {
-                        EXPOSURE_TIMES_SECONDS.forEach { seconds ->
-                            DropdownMenuItem(
-                                text = { Text(formatExposureSeconds(seconds), color = Color.White) },
-                                onClick = {
-                                    onExposureChange(seconds)
-                                    onDropdownToggle(false)
-                                }
-                            )
+                        OutlinedTextField(
+                            value = formatExposureSeconds(selectedExposureSeconds),
+                            onValueChange = {},
+                            readOnly = true,
+                            enabled = isChangeable,
+                            label = { Text("露出時間", color = Color.LightGray, fontSize = 9.sp) },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded && isChangeable)
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                disabledTextColor = Color.LightGray,
+                                focusedBorderColor = Color(0xFF1E88E5),
+                                unfocusedBorderColor = Color.Gray,
+                                disabledBorderColor = Color.DarkGray,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent
+                            ),
+                            modifier = Modifier
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                                .width(90.dp)
+                        )
+
+                        ExposedDropdownMenu(
+                            expanded = isDropdownExpanded && isChangeable,
+                            onDismissRequest = { onDropdownToggle(false) }
+                        ) {
+                            EXPOSURE_TIMES_SECONDS.forEach { seconds ->
+                                DropdownMenuItem(
+                                    text = { Text(formatExposureSeconds(seconds), color = Color.White) },
+                                    onClick = {
+                                        onExposureChange(seconds)
+                                        onDropdownToggle(false)
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -858,6 +1053,7 @@ private fun IntervalTabContent(
     isIntervalActive: Boolean,
     shotCount: Int,
     selectedExposureSeconds: Double,
+    selectedResolution: CaptureResolution,
     statusMessage: String,
     onStartInterval: () -> Unit,
     onStopInterval: () -> Unit,
@@ -870,6 +1066,9 @@ private fun IntervalTabContent(
             modifier = Modifier.fillMaxSize(),
             onCameraBound = onCameraBound
         )
+
+        // ★ クロップ枠線オーバーレイ描画
+        CropGuideOverlay(selectedResolution = selectedResolution)
 
         Column(
             modifier = Modifier
@@ -886,7 +1085,7 @@ private fun IntervalTabContent(
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 撮影数: ${shotCount}コマ",
+                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 画質: ${selectedResolution.shortLabel} | 撮影数: ${shotCount}コマ",
                 color = Color.LightGray,
                 fontSize = 12.sp
             )
