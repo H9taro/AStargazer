@@ -275,11 +275,14 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
     var selectedExposureSeconds by remember { mutableDoubleStateOf(4.0) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
 
-    // ★ 選択された撮影解像度/クロップサイズ (デフォルト フルHD)
+    // 選択された撮影解像度/クロップサイズ (デフォルト フルHD)
     var selectedResolution by remember { mutableStateOf(CaptureResolution.FHD) }
 
-    // ★ ダークフレーム使用フラグ (デフォルト true)
+    // ダークフレーム使用フラグ (デフォルト true)
     var useDarkFrame by remember { mutableStateOf(true) }
+
+    // ★ リアルタイム音声認識ステータス表示
+    var voiceStatusText by remember { mutableStateOf("音声受付中...") }
 
     // ステータスメッセージ
     var statusMessage by remember {
@@ -328,11 +331,17 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
 
     // ★ 音声コマンド認識マネージャーのリスニング制御
     val voiceCommandManager = remember {
-        VoiceCommandManager(context) {
-            coroutineScope.launch(Dispatchers.Main) {
-                onTriggerShutter()
+        VoiceCommandManager(
+            context = context,
+            onRecognizedStatusChanged = { status ->
+                voiceStatusText = status
+            },
+            onShutterCommandTriggered = {
+                coroutineScope.launch(Dispatchers.Main) {
+                    onTriggerShutter()
+                }
             }
-        }
+        )
     }
 
     DisposableEffect(hasAudioPermission) {
@@ -696,6 +705,7 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                         isDropdownExpanded = isDropdownExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
+                        voiceStatusText = voiceStatusText,
                         onExposureChange = { selectedExposureSeconds = it },
                         onResolutionResolutionChange = { selectedResolution = it },
                         onUseDarkFrameChange = { useDarkFrame = it },
@@ -716,6 +726,7 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                         selectedExposureSeconds = selectedExposureSeconds,
                         selectedResolution = selectedResolution,
                         statusMessage = statusMessage,
+                        voiceStatusText = voiceStatusText,
                         onStartInterval = { startIntervalShootingLoop() },
                         onStopInterval = {
                             if (isIntervalShootingActive) {
@@ -762,7 +773,6 @@ private fun CropGuideOverlay(
 
         if (width <= 0f || height <= 0f) return@BoxWithConstraints
 
-        // 画質・解像度ごとの画面占有スケール比率 (フルHD: 85%, HD: 65%)
         val scale = if (selectedResolution == CaptureResolution.FHD) 0.85f else 0.65f
 
         val maxCropWidth: Float
@@ -784,13 +794,11 @@ private fun CropGuideOverlay(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val maskColor = Color.Black.copy(alpha = 0.5f)
 
-            // 外側マスク描画
             drawRect(color = maskColor, topLeft = Offset(0f, 0f), size = Size(width, top))
             drawRect(color = maskColor, topLeft = Offset(0f, top + maxCropHeight), size = Size(width, height - (top + maxCropHeight)))
             drawRect(color = maskColor, topLeft = Offset(0f, top), size = Size(left, maxCropHeight))
             drawRect(color = maskColor, topLeft = Offset(left + maxCropWidth, top), size = Size(width - (left + maxCropWidth), maxCropHeight))
 
-            // 破線枠線
             drawRect(
                 color = borderColor,
                 topLeft = Offset(left, top),
@@ -802,7 +810,6 @@ private fun CropGuideOverlay(
             )
         }
 
-        // ガイドラベル表示
         Text(
             text = "✂ クロップ領域 (${selectedResolution.shortLabel})",
             color = borderColor,
@@ -831,6 +838,7 @@ private fun SetupTabContent(
     isDropdownExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
+    voiceStatusText: String,
     onExposureChange: (Double) -> Unit,
     onResolutionResolutionChange: (CaptureResolution) -> Unit,
     onUseDarkFrameChange: (Boolean) -> Unit,
@@ -846,7 +854,6 @@ private fun SetupTabContent(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(Unit) {
-                // 上スワイプ（キャンセル）の検出
                 detectVerticalDragGestures(
                     onDragStart = { totalDragY = 0f },
                     onDragEnd = {
@@ -861,7 +868,6 @@ private fun SetupTabContent(
                 )
             }
             .pointerInput(selectedResolution) {
-                // ★ 左右スワイプ（画質・クロップ範囲の順次切替: フルHD -> 最大画質 -> HD）の検出
                 detectHorizontalDragGestures(
                     onDragStart = { totalDragX = 0f },
                     onDragEnd = {
@@ -889,11 +895,10 @@ private fun SetupTabContent(
                 onCameraBound = onCameraBound
             )
 
-            // ★ クロップ枠線オーバーレイ描画
             CropGuideOverlay(selectedResolution = selectedResolution)
         }
 
-        // ★ ヘッダー（見切れ解消レイアウト）
+        // ヘッダー（見切れ解消レイアウト ＋ リアルタイム音声ステータス表示）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -920,9 +925,9 @@ private fun SetupTabContent(
                     )
                 }
 
-                // ★ 🎤 音声操作案内バッジ
+                // 🎙 音声操作＆リアルタイム認識テキスト表示バッジ
                 Surface(
-                    color = Color(0xFF1E88E5).copy(alpha = 0.25f),
+                    color = Color(0xFF1E88E5).copy(alpha = 0.3f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(
@@ -930,7 +935,7 @@ private fun SetupTabContent(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = "🎙 「とります」でシャッター",
+                            text = "🎙 $voiceStatusText",
                             color = Color(0xFF64B5F6),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Medium
@@ -943,13 +948,11 @@ private fun SetupTabContent(
 
             val isChangeable = currentStep == WorkflowStep.EXPOSURE_SETTING
 
-            // ★ 2行目設定コントロール（広々とゆったり配置し見切れを防止）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 画質表示バッジ（横スワイプでの切り替えを案内）
                 Surface(
                     color = Color.DarkGray.copy(alpha = 0.7f),
                     shape = RoundedCornerShape(6.dp)
@@ -963,7 +966,6 @@ private fun SetupTabContent(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // ダーク撮影チェックボックス
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(end = 8.dp)
@@ -984,7 +986,6 @@ private fun SetupTabContent(
                         )
                     }
 
-                    // ★ 見切れ解消された 露出時間ドロップダウン
                     ExposedDropdownMenuBox(
                         expanded = isDropdownExpanded && isChangeable,
                         onExpandedChange = {
@@ -1119,6 +1120,7 @@ private fun IntervalTabContent(
     selectedExposureSeconds: Double,
     selectedResolution: CaptureResolution,
     statusMessage: String,
+    voiceStatusText: String,
     onStartInterval: () -> Unit,
     onStopInterval: () -> Unit,
     onResolutionResolutionChange: (CaptureResolution) -> Unit,
@@ -1149,7 +1151,6 @@ private fun IntervalTabContent(
             onCameraBound = onCameraBound
         )
 
-        // クロップ枠線オーバーレイ描画
         CropGuideOverlay(selectedResolution = selectedResolution)
 
         Column(
@@ -1172,11 +1173,11 @@ private fun IntervalTabContent(
                 )
 
                 Surface(
-                    color = Color(0xFF1E88E5).copy(alpha = 0.25f),
+                    color = Color(0xFF1E88E5).copy(alpha = 0.3f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
-                        text = "🎙 「とります」で停止/開始",
+                        text = "🎙 $voiceStatusText",
                         color = Color(0xFF64B5F6),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium,
