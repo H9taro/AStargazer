@@ -281,76 +281,12 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
     // ダークフレーム使用フラグ (デフォルト true)
     var useDarkFrame by remember { mutableStateOf(true) }
 
-    // ★ リアルタイム音声認識ステータス表示
+    // リアルタイム音声認識ステータス表示
     var voiceStatusText by remember { mutableStateOf("音声受付中...") }
 
     // ステータスメッセージ
     var statusMessage by remember {
         mutableStateOf("露出時間を選択し、開始ボタンを押すか「とります」と話してください。")
-    }
-
-    // 主シャッターボタン押下アクション（ボタンクリック＆音声コマンド共通）
-    val onTriggerShutter: () -> Unit = {
-        if (!isProcessing) {
-            when (selectedTab) {
-                MainMenuTab.SETUP -> {
-                    when (currentStep) {
-                        WorkflowStep.EXPOSURE_SETTING -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
-                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
-                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
-                        WorkflowStep.TEST_RESULT_DISPLAY -> {
-                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_NOTICE
-                            else currentStep = WorkflowStep.SETUP_COMPLETED
-                        }
-                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
-                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_NOTICE
-                            else currentStep = WorkflowStep.SETUP_COMPLETED
-                        }
-                        WorkflowStep.DARK_FRAME_NOTICE -> {
-                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_SHOOTING
-                            else currentStep = WorkflowStep.SETUP_COMPLETED
-                        }
-                        WorkflowStep.DARK_FRAME_SHOOTING -> {}
-                        WorkflowStep.SETUP_COMPLETED -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
-                    }
-                }
-                MainMenuTab.INTERVAL -> {
-                    if (isIntervalShootingActive) {
-                        isIntervalShootingActive = false
-                        if (shotCount > 0) isIntervalCompleted = true
-                        statusMessage = "インターバル撮影を正常停止しました。(合計: ${shotCount}枚)"
-                        ttsManager.speak("インターバル撮影を終了しました")
-                    } else {
-                        // ループスタート
-                    }
-                }
-                MainMenuTab.SAVE -> {}
-            }
-        }
-    }
-
-    // ★ 音声コマンド認識マネージャーのリスニング制御
-    val voiceCommandManager = remember {
-        VoiceCommandManager(
-            context = context,
-            onRecognizedStatusChanged = { status ->
-                voiceStatusText = status
-            },
-            onShutterCommandTriggered = {
-                coroutineScope.launch(Dispatchers.Main) {
-                    onTriggerShutter()
-                }
-            }
-        )
-    }
-
-    DisposableEffect(hasAudioPermission) {
-        if (hasAudioPermission) {
-            voiceCommandManager.startListening()
-        }
-        onDispose {
-            voiceCommandManager.stopListening()
-        }
     }
 
     // 必要に応じて画像をクロップ・リサイズして指定ファイルに書き込む共通関数
@@ -375,19 +311,6 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
         } catch (e: Exception) {
             Log.e("MainScreen", "Crop/Save failed for ${outputFile.name}", e)
         }
-    }
-
-    // 撮影前設定の強制的キャンセル
-    fun cancelSetup() {
-        isProcessing = false
-        isSetupCompleted = false
-        isIntervalCompleted = false
-        currentStep = WorkflowStep.EXPOSURE_SETTING
-        capturedTestBitmap = null
-        val msg = "撮影前設定をキャンセルしました。「インターバル撮影」「保存」が無効化されました。"
-        statusMessage = msg
-        ttsManager.speak("撮影前設定をキャンセルしました")
-        selectedTab = MainMenuTab.SETUP
     }
 
     // 単発撮影用サスペンド関数（インターバル撮影の1コマ分）
@@ -473,6 +396,85 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                 delay(100L)
             }
         }
+    }
+
+    // ★ 主シャッターボタン押下アクション（ボタンクリック＆音声コマンド共通）
+    val onTriggerShutter: () -> Unit = {
+        if (!isProcessing) {
+            when (selectedTab) {
+                MainMenuTab.SETUP -> {
+                    when (currentStep) {
+                        WorkflowStep.EXPOSURE_SETTING -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
+                        WorkflowStep.TEST_RESULT_DISPLAY -> {
+                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                            else currentStep = WorkflowStep.SETUP_COMPLETED
+                        }
+                        WorkflowStep.DIRECTION_CONFIRM_NOTICE -> {
+                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                            else currentStep = WorkflowStep.SETUP_COMPLETED
+                        }
+                        WorkflowStep.DARK_FRAME_NOTICE -> {
+                            if (useDarkFrame) currentStep = WorkflowStep.DARK_FRAME_SHOOTING
+                            else currentStep = WorkflowStep.SETUP_COMPLETED
+                        }
+                        WorkflowStep.DARK_FRAME_SHOOTING -> {}
+                        WorkflowStep.SETUP_COMPLETED -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+                    }
+                }
+                MainMenuTab.INTERVAL -> {
+                    if (isIntervalShootingActive) {
+                        // 停止処理
+                        isIntervalShootingActive = false
+                        if (shotCount > 0) isIntervalCompleted = true
+                        statusMessage = "インターバル撮影を正常停止しました。(合計: ${shotCount}枚)"
+                        ttsManager.speak("インターバル撮影を終了しました")
+                    } else {
+                        // ★ 修正: 音声「とります」でのインターバル撮影スタートを実行！
+                        startIntervalShootingLoop()
+                    }
+                }
+                MainMenuTab.SAVE -> {}
+            }
+        }
+    }
+
+    // 音声コマンド認識マネージャーのリスニング制御
+    val voiceCommandManager = remember {
+        VoiceCommandManager(
+            context = context,
+            onRecognizedStatusChanged = { status ->
+                voiceStatusText = status
+            },
+            onShutterCommandTriggered = {
+                coroutineScope.launch(Dispatchers.Main) {
+                    onTriggerShutter()
+                }
+            }
+        )
+    }
+
+    DisposableEffect(hasAudioPermission) {
+        if (hasAudioPermission) {
+            voiceCommandManager.startListening()
+        }
+        onDispose {
+            voiceCommandManager.stopListening()
+        }
+    }
+
+    // 撮影前設定の強制的キャンセル
+    fun cancelSetup() {
+        isProcessing = false
+        isSetupCompleted = false
+        isIntervalCompleted = false
+        currentStep = WorkflowStep.EXPOSURE_SETTING
+        capturedTestBitmap = null
+        val msg = "撮影前設定をキャンセルしました。「インターバル撮影」「保存」が無効化されました。"
+        statusMessage = msg
+        ttsManager.speak("撮影前設定をキャンセルしました")
+        selectedTab = MainMenuTab.SETUP
     }
 
     // 試写と自動調整の実行関数
@@ -727,15 +729,7 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                         selectedResolution = selectedResolution,
                         statusMessage = statusMessage,
                         voiceStatusText = voiceStatusText,
-                        onStartInterval = { startIntervalShootingLoop() },
-                        onStopInterval = {
-                            if (isIntervalShootingActive) {
-                                isIntervalShootingActive = false
-                                if (shotCount > 0) isIntervalCompleted = true
-                                statusMessage = "インターバル撮影を正常停止しました。(合計: ${shotCount}枚)"
-                                ttsManager.speak("インターバル撮影を終了しました")
-                            }
-                        },
+                        onTriggerShutter = onTriggerShutter,
                         onResolutionResolutionChange = { selectedResolution = it },
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
@@ -925,7 +919,6 @@ private fun SetupTabContent(
                     )
                 }
 
-                // 🎙 音声操作＆リアルタイム認識テキスト表示バッジ
                 Surface(
                     color = Color(0xFF1E88E5).copy(alpha = 0.3f),
                     shape = RoundedCornerShape(12.dp)
@@ -1121,8 +1114,7 @@ private fun IntervalTabContent(
     selectedResolution: CaptureResolution,
     statusMessage: String,
     voiceStatusText: String,
-    onStartInterval: () -> Unit,
-    onStopInterval: () -> Unit,
+    onTriggerShutter: () -> Unit,
     onResolutionResolutionChange: (CaptureResolution) -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
@@ -1224,13 +1216,7 @@ private fun IntervalTabContent(
             contentAlignment = Alignment.Center
         ) {
             Button(
-                onClick = {
-                    if (isIntervalActive) {
-                        onStopInterval()
-                    } else {
-                        onStartInterval()
-                    }
-                },
+                onClick = onTriggerShutter,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
