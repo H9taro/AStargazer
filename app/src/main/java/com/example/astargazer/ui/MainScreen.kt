@@ -708,44 +708,39 @@ private fun CropGuideOverlay(
 
         if (width <= 0f || height <= 0f) return@BoxWithConstraints
 
-        // 16:9 画角のトリミング領域を画面中央に設定
-        val cropWidth: Float
-        val cropHeight: Float
+        // ★ 画質・解像度ごとの画面占有スケール比率 (フルHD: 85%, HD: 65%)
+        val scale = if (selectedResolution == CaptureResolution.FHD) 0.85f else 0.65f
+
+        val maxCropWidth: Float
+        val maxCropHeight: Float
 
         if (width * 9f > height * 16f) {
-            cropHeight = height
-            cropWidth = (height * 16f) / 9f
+            maxCropHeight = height * scale
+            maxCropWidth = (maxCropHeight * 16f) / 9f
         } else {
-            cropWidth = width
-            cropHeight = (width * 9f) / 16f
+            maxCropWidth = width * scale
+            maxCropHeight = (maxCropWidth * 9f) / 16f
         }
 
-        val left = (width - cropWidth) / 2f
-        val top = (height - cropHeight) / 2f
+        val left = (width - maxCropWidth) / 2f
+        val top = (height - maxCropHeight) / 2f
+
+        val borderColor = if (selectedResolution == CaptureResolution.FHD) Color(0xFF00E676) else Color(0xFFFF5252)
 
         Canvas(modifier = Modifier.fillMaxSize()) {
-            // クロップ枠外の上下/左右を半透明黒でマスキング
             val maskColor = Color.Black.copy(alpha = 0.5f)
 
-            if (top > 0) {
-                // 上部マスク
-                drawRect(color = maskColor, topLeft = Offset(0f, 0f), size = Size(width, top))
-                // 下部マスク
-                drawRect(color = maskColor, topLeft = Offset(0f, top + cropHeight), size = Size(width, height - (top + cropHeight)))
-            }
+            // 外側マスク描画
+            drawRect(color = maskColor, topLeft = Offset(0f, 0f), size = Size(width, top))
+            drawRect(color = maskColor, topLeft = Offset(0f, top + maxCropHeight), size = Size(width, height - (top + maxCropHeight)))
+            drawRect(color = maskColor, topLeft = Offset(0f, top), size = Size(left, maxCropHeight))
+            drawRect(color = maskColor, topLeft = Offset(left + maxCropWidth, top), size = Size(width - (left + maxCropWidth), maxCropHeight))
 
-            if (left > 0) {
-                // 左側マスク
-                drawRect(color = maskColor, topLeft = Offset(0f, 0f), size = Size(left, height))
-                // 右側マスク
-                drawRect(color = maskColor, topLeft = Offset(left + cropWidth, 0f), size = Size(width - (left + cropWidth), height))
-            }
-
-            // 16:9 クロップ境界線 (赤い破線ガイド枠)
+            // 破線枠線
             drawRect(
-                color = Color(0xFFFF5252),
+                color = borderColor,
                 topLeft = Offset(left, top),
-                size = Size(cropWidth, cropHeight),
+                size = Size(maxCropWidth, maxCropHeight),
                 style = Stroke(
                     width = 2.dp.toPx(),
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 12f), 0f)
@@ -756,7 +751,7 @@ private fun CropGuideOverlay(
         // ガイドラベル表示
         Text(
             text = "✂ クロップ領域 (${selectedResolution.shortLabel})",
-            color = Color(0xFFFF8A80),
+            color = borderColor,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier
