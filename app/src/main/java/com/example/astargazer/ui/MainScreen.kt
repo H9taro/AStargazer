@@ -339,7 +339,7 @@ private fun MainAppContent() {
         }
     }
 
-    // インターバル撮影ループ関数
+    // インターバル撮影ループ関数 (ノンストップ限界高速化版)
     fun startIntervalShootingLoop() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
@@ -359,8 +359,13 @@ private fun MainAppContent() {
             while (isIntervalShootingActive) {
                 shotCount++
 
-                val storageStr = StorageHelper.getFormattedAvailableStorage(context)
-                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残容量: $storageStr]"
+                // 画面ステータス更新の軽量化 (ストレージ容量計算は10コマに1回のみ)
+                if (shotCount == 1 || shotCount % 10 == 0) {
+                    val storageStr = StorageHelper.getFormattedAvailableStorage(context)
+                    statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残容量: $storageStr]"
+                } else {
+                    statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚]"
+                }
 
                 val success = captureIntervalFrame(imageCapture, shotCount, optimalIso)
                 if (success) {
@@ -369,8 +374,7 @@ private fun MainAppContent() {
                     Log.w("MainScreen", "Failed to capture frame $shotCount")
                 }
 
-                val gapDelay = if (selectedExposureSeconds <= 0.5) 10L else 50L
-                delay(gapDelay)
+                // ウェイトを完全に廃止し、カメラの準備ができ次第即座に次の撮影へ移行 (ノーウェイト連写)
             }
         }
     }
