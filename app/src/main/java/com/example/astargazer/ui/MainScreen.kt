@@ -357,13 +357,14 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
         }
     }
 
-    // インターバル撮影ループ関数 (高速化最適化版)
+    // インターバル撮影ループ関数 (爆速最適化版: 空き容量チェックは開始直後の1回のみ)
     fun startIntervalShootingLoop() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "キャプチャ機能の準備ができていません。"
             return
         }
 
+        // ★ 撮影開始直後の1回のみ空き容量を計算（連写中のディスク読込を廃止して限界まで高速化）
         val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
         val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
@@ -377,22 +378,8 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
             ttsManager.speak(startMsg)
 
             while (isIntervalShootingActive) {
-                // ★ ストレージ空き容量の確認は重いため 10コマに1回に頻度を削減して高速化
-                if (shotCount % 10 == 0) {
-                    val currentStorageBytes = StorageHelper.getAvailableStorageBytes(context)
-                    if (currentStorageBytes <= minAllowedStorageBytes) {
-                        isIntervalShootingActive = false
-                        isIntervalCompleted = shotCount > 0
-                        val stopMsg = "空き容量の50%に達したため、撮影を自動終了しました。(合計: ${shotCount}枚)"
-                        statusMessage = stopMsg
-                        ttsManager.speak("撮影上限容量に達したためインターバル撮影を終了しました")
-                        break
-                    }
-                }
-
                 shotCount++
 
-                // 残り枚数の概算表示（軽量化のためキャッシュ値を使用）
                 val storageStr = StorageHelper.getFormattedAvailableStorage(context)
                 statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残容量: $storageStr]"
 
@@ -403,8 +390,8 @@ private fun MainAppContent(hasAudioPermission: Boolean) {
                     Log.w("MainScreen", "Failed to capture frame $shotCount")
                 }
 
-                // 露出時間に応じた最適な最小ギャップ (0.25秒等の場合は極力ウェイトを短縮)
-                val gapDelay = if (selectedExposureSeconds <= 0.5) 20L else 100L
+                // 露出時間に応じた最適な最小ギャップ (0.25秒設定時はウェイトを限界まで短縮)
+                val gapDelay = if (selectedExposureSeconds <= 0.5) 10L else 50L
                 delay(gapDelay)
             }
         }
