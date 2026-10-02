@@ -15,15 +15,12 @@ object VideoEncoderHelper {
 
     /**
      * 静止画ファイル群から MP4 タイムラプス動画(フルHD 1080p)を生成する
-     * @param imageFiles ソース静止画ファイルリスト
-     * @param outputFile 出力先 MP4 ファイル
-     * @param frameRate フレームレート (fps, 例: 30)
-     * @param onProgress 進捗コールバック (0.0 ~ 1.0)
-     * @return 生成成功の可否
+     * ダークフレーム画像が存在する場合は自動的にダーク減算ノイズ除去を実行する
      */
     fun createTimelapseVideo(
         imageFiles: List<File>,
         outputFile: File,
+        darkFrameFile: File? = null,
         frameRate: Int = 30,
         onProgress: (Float) -> Unit = {}
     ): Boolean {
@@ -36,6 +33,13 @@ object VideoEncoderHelper {
         if (outputFile.exists()) outputFile.delete()
 
         try {
+            // ダークフレーム画像の読み込み
+            val darkBitmap = if (darkFrameFile != null && darkFrameFile.exists()) {
+                BitmapFactory.decodeFile(darkFrameFile.absolutePath)
+            } else {
+                null
+            }
+
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(imageFiles[0].absolutePath, options)
             val srcWidth = options.outWidth
@@ -77,7 +81,9 @@ object VideoEncoderHelper {
             val dstRect = Rect(0, 0, targetWidth, targetHeight)
 
             for ((index, file) in imageFiles.withIndex()) {
-                val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: continue
+                val rawBitmap = BitmapFactory.decodeFile(file.absolutePath) ?: continue
+                val bitmap = ImageCompositor.subtractDarkFrame(rawBitmap, darkBitmap)
+                if (rawBitmap != bitmap) rawBitmap.recycle()
 
                 // Surface への描画 (フルHD 1080p にスケーリング)
                 val canvas: Canvas = inputSurface.lockCanvas(null)
@@ -119,6 +125,8 @@ object VideoEncoderHelper {
                 onProgress((index + 1).toFloat() / imageFiles.size)
             }
 
+            darkBitmap?.recycle()
+
             // EOS (流し込み終了通知)
             encoder.signalEndOfInputStream()
 
@@ -150,7 +158,7 @@ object VideoEncoderHelper {
                 muxer.release()
             }
 
-            Log.d("VideoEncoder", "Timelapse video successfully created at ${outputFile.absolutePath} (size: ${outputFile.length()} bytes)")
+            Log.d("VideoEncoder", "Timelapse video with dark frame subtraction created at ${outputFile.absolutePath} (size: ${outputFile.length()} bytes)")
             return outputFile.exists() && outputFile.length() > 0
         } catch (e: Exception) {
             Log.e("VideoEncoder", "Failed to create timelapse video", e)

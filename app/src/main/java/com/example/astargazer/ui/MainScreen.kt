@@ -1179,13 +1179,16 @@ private fun SaveTabContent(
         if (intervalFiles.isEmpty()) return
         isGenerating = true
         progress = 0f
-        exportStatusMessage = "タイムラプス動画(*.mp4)を生成中..."
+        exportStatusMessage = "タイムラプス動画(*.mp4)を生成中 (ダークフレーム自動減算適用)..."
 
         coroutineScope.launch(Dispatchers.IO) {
             val outputFile = StorageHelper.getTimelapseVideoFile(context)
+            val darkFrameFile = StorageHelper.getDarkFrameFile(context)
+
             val success = VideoEncoderHelper.createTimelapseVideo(
                 imageFiles = intervalFiles,
                 outputFile = outputFile,
+                darkFrameFile = darkFrameFile,
                 frameRate = 30,
                 onProgress = { p -> progress = p }
             )
@@ -1211,13 +1214,16 @@ private fun SaveTabContent(
         if (intervalFiles.isEmpty()) return
         isGenerating = true
         progress = 0f
-        exportStatusMessage = "比較明合成静止画(*.jpg)を生成中..."
+        exportStatusMessage = "比較明合成静止画(*.jpg)を生成中 (ダークフレーム自動減算適用)..."
 
         coroutineScope.launch(Dispatchers.IO) {
             val outputFile = StorageHelper.getCompositeImageFile(context)
+            val darkFrameFile = StorageHelper.getDarkFrameFile(context)
+
             val success = ImageCompositor.createLightenBlendComposite(
                 imageFiles = intervalFiles,
                 outputFile = outputFile,
+                darkFrameFile = darkFrameFile,
                 onProgress = { p -> progress = p }
             )
 
