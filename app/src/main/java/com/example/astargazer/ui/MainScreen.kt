@@ -273,7 +273,7 @@ private fun MainAppContent() {
         mutableStateOf("露出時間・画質を選択し、シャッターボタンを押してください。")
     }
 
-    // 必要に応じて画像をクロップ・リサイズして指定ファイルに書き込む共通関数
+    // 必要に応じて画像をクロップ・リサイズして非圧縮 PNG で指定ファイルに書き込む共通関数
     fun processAndSaveFile(outputFile: File, rawFile: File) {
         if (selectedResolution == CaptureResolution.FULL) {
             FileViewerHelper.scanFile(context, rawFile)
@@ -287,7 +287,7 @@ private fun MainAppContent() {
                 srcBitmap.recycle()
 
                 FileOutputStream(outputFile).use { out ->
-                    cropped.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                    cropped.compress(Bitmap.CompressFormat.PNG, 100, out)
                 }
                 cropped.recycle()
                 FileViewerHelper.scanFile(context, outputFile)
@@ -469,7 +469,7 @@ private fun MainAppContent() {
                             val testFile = StorageHelper.getTestShootingFile()
                             try {
                                 FileOutputStream(testFile).use { out ->
-                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                                 }
                                 com.example.astargazer.util.ExifHelper.saveExifAttributes(testFile, optimalIso, selectedExposureSeconds)
                                 FileViewerHelper.scanFile(context, testFile)

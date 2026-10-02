@@ -8,8 +8,8 @@ import java.util.Locale
 
 object StorageHelper {
 
-    // 1コマ（静止画1枚）あたりの推定ファイルサイズ (約5MB)
-    const val ESTIMATED_BYTES_PER_FRAME = 5 * 1024 * 1024L
+    // 1コマ（非圧縮静止画1枚）あたりの推定ファイルサイズ (PNG非圧縮時は約10〜15MB)
+    const val ESTIMATED_BYTES_PER_FRAME = 15 * 1024 * 1024L
 
     /**
      * パブリックの Pictures/AStargazer ディレクトリを取得
@@ -60,32 +60,32 @@ object StorageHelper {
     }
 
     /**
-     * 試写調整画像の保存先ファイル (パブリック Pictures/AStargazer/TestShooting/)
+     * 試写調整画像の保存先ファイル (非圧縮 PNG)
      */
     fun getTestShootingFile(): File {
         val dir = getPublicAStargazerDir("TestShooting")
-        return File(dir, "Test_${System.currentTimeMillis()}.jpg")
+        return File(dir, "Test_${System.currentTimeMillis()}.png")
     }
 
     /**
-     * ダークフレーム保存用ファイルの取得 (パブリック Pictures/AStargazer/DarkFrame/)
+     * ダークフレーム保存用ファイルの取得 (非圧縮 PNG)
      */
     fun getDarkFrameFile(context: Context? = null): File {
         val dir = getPublicAStargazerDir("DarkFrame")
-        return File(dir, "dark_frame.jpg")
+        return File(dir, "dark_frame.png")
     }
 
     /**
-     * インターバル撮影写真の保存先ファイルの生成 (パブリック Pictures/AStargazer/Interval/)
+     * インターバル撮影写真の保存先ファイルの生成 (非圧縮 PNG)
      */
     fun createIntervalImageFile(context: Context? = null, index: Int): File {
         val dir = getPublicAStargazerDir("Interval")
         val timestamp = System.currentTimeMillis()
-        return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, timestamp))
+        return File(dir, "IMG_%04d_%d.png".format(Locale.JAPAN, index, timestamp))
     }
 
     /**
-     * 比較明合成（Lighten Blend）静止画の保存先ファイル (パブリック Pictures/AStargazer/Export/)
+     * 比較明合成（Lighten Blend）静止画の保存先ファイル (出力は標準高画質 JPEG)
      */
     fun getCompositeImageFile(context: Context? = null): File {
         val dir = getPublicAStargazerDir("Export")
@@ -103,7 +103,7 @@ object StorageHelper {
     }
 
     /**
-     * 保存済みのインターバル撮影写真ファイルの一覧を取得
+     * 保存済みのインターバル撮影写真ファイルの一覧を取得 (非圧縮 PNG 対象)
      * (※ ゴミ箱ファイル .trashed- や ドット隠しファイルは除外)
      */
     fun getIntervalImageFiles(context: Context? = null): List<File> {
@@ -116,7 +116,7 @@ object StorageHelper {
                     !file.isHidden &&
                     !name.startsWith(".") &&
                     !name.startsWith(".trashed") &&
-                    (file.extension.equals("jpg", ignoreCase = true) || file.extension.equals("jpeg", ignoreCase = true))
+                    file.extension.equals("png", ignoreCase = true)
         }?.sortedBy { it.name } ?: emptyList()
     }
 }
