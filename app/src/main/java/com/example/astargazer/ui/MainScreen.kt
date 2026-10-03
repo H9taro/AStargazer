@@ -74,6 +74,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.google.common.util.concurrent.ListenableFuture
 import com.example.astargazer.ui.camera.CameraControlManager
 import com.example.astargazer.ui.camera.CameraPreview
 import com.example.astargazer.util.BitmapUtils
@@ -88,13 +89,29 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.FileOutputStream
+import java.util.concurrent.Executor
 import java.util.Locale
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * 露出時間の選択肢（秒数: 0.25秒, 0.5秒, 1秒, 2秒, 4秒, 8秒, 15秒, 30秒）
  */
 val EXPOSURE_TIMES_SECONDS = listOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
+
+private suspend fun ListenableFuture<*>.awaitCompletion() {
+    suspendCancellableCoroutine<Unit> { continuation ->
+        addListener({
+            try {
+                get()
+                continuation.resume(Unit)
+            } catch (exception: Exception) {
+                continuation.resumeWithException(exception)
+            }
+        }, Executor { command -> command.run() })
+        continuation.invokeOnCancellation { cancel(false) }
+    }
+}
 
 /**
  * 露出時間のフォーマット
@@ -343,6 +360,10 @@ private fun MainAppContent() {
 
     // インターバル撮影ループ
     fun startIntervalShootingLoop() {
+        val camera = cameraInstance ?: run {
+            statusMessage = "カメラの準備ができていません。"
+            return
+        }
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
             return
@@ -365,6 +386,25 @@ private fun MainAppContent() {
         Log.i("IntervalPerf", ">>> START INTERVAL SHOOTING LOOP (Exposure: ${selectedExposureSeconds}s, ISO: $optimalIso) <<<")
 
         coroutineScope.launch {
+            try {
+                val exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
+                val settingsStartTime = System.currentTimeMillis()
+                CameraControlManager.setManualFocusAndExposure(
+                    camera = camera,
+                    focusDistance = 0.0f,
+                    iso = optimalIso,
+                    exposureTimeNs = exposureTimeNs
+                ).awaitCompletion()
+                Log.i(
+                    "IntervalPerf",
+                    "Manual camera settings applied in ${System.currentTimeMillis() - settingsStartTime}ms"
+                )
+            } catch (exception: Exception) {
+                isIntervalShootingActive = false
+                statusMessage = "カメラ設定の適用に失敗しました: ${exception.message}"
+                Log.e("IntervalPerf", "Failed to apply manual camera settings", exception)
+            }
+
             while (isIntervalShootingActive) {
                 shotCount++
                 if (currentRemainingShots > 0) {
@@ -478,17 +518,24 @@ private fun MainAppContent() {
         isProcessing = true
         statusMessage = "試写を実行中: 無限遠ピント & ISO($optimalIso)..."
 
-        CameraControlManager.setManualFocusAndExposure(
-            camera = camera,
-            focusDistance = 0.0f,
-            iso = optimalIso,
-            exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
-        )
-
         val executor = ContextCompat.getMainExecutor(context)
         val currentLocation = LocationHelper.getLastKnownLocation(context)
 
         coroutineScope.launch {
+            try {
+                CameraControlManager.setManualFocusAndExposure(
+                    camera = camera,
+                    focusDistance = 0.0f,
+                    iso = optimalIso,
+                    exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
+                ).awaitCompletion()
+            } catch (exception: Exception) {
+                isProcessing = false
+                statusMessage = "カメラ設定の適用に失敗しました: ${exception.message}"
+                Log.e("MainScreen", "Failed to apply manual camera settings", exception)
+                return@launch
+            }
+
             // ★ 試写のシャッター押下直後の1秒待機（手ブレ対策）
             delay(1000L)
 

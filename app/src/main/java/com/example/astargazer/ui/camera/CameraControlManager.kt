@@ -6,6 +6,7 @@ import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
+import com.google.common.util.concurrent.ListenableFuture
 
 @ExperimentalCamera2Interop
 object CameraControlManager {
@@ -40,7 +41,7 @@ object CameraControlManager {
         focusDistance: Float = 0.0f,
         iso: Int = 1600,
         exposureTimeNs: Long? = null,
-    ) {
+    ): ListenableFuture<Void?> {
         val camera2CameraControl = Camera2CameraControl.from(camera.cameraControl)
 
         val optionsBuilder = CaptureRequestOptions.Builder()
@@ -70,9 +71,10 @@ object CameraControlManager {
             )
         }
 
-        camera2CameraControl.setCaptureRequestOptions(optionsBuilder.build())
+        val updateFuture = camera2CameraControl.setCaptureRequestOptions(optionsBuilder.build())
 
         Log.d("CameraControlManager", "Manual params set: FocusDist=$focusDistance, ISO=$iso, ExposureNs=$exposureTimeNs")
+        return updateFuture
     }
 
     /**
