@@ -285,8 +285,8 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // インターバル1コマ撮影（最大画質・クロップ/減算なし、初回の1秒待機で手ブレ防止、GPS位置情報付与）
-    suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
+    // インターバル1コマ撮影（高速化：GPSは開始時1回、MediaScannerは撮影中呼ばない）
+    suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int, baseLocation: android.location.Location?): Boolean {
         return suspendCancellableCoroutine { continuation ->
             coroutineScope.launch {
                 if (index == 1) {
@@ -296,7 +296,6 @@ private fun MainAppContent() {
                 val outputFile = StorageHelper.createIntervalImageFile(context, index)
                 val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
                 val executor = ContextCompat.getMainExecutor(context)
-                val currentLocation = LocationHelper.getLastKnownLocation(context)
 
                 imageCapture.takePicture(
                     outputOptions,
@@ -305,17 +304,17 @@ private fun MainAppContent() {
                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                             if (continuation.isActive) continuation.resume(true)
 
+                            // バックグラウンドでExif書き込みのみ高速実行（MediaScannerは連写中除外）
                             coroutineScope.launch(Dispatchers.IO) {
                                 try {
-                                    FileViewerHelper.scanFile(context, outputFile)
                                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                                         file = outputFile,
                                         iso = iso,
                                         exposureSeconds = selectedExposureSeconds,
-                                        location = currentLocation
+                                        location = baseLocation
                                     )
                                 } catch (e: Exception) {
-                                    Log.e("MainScreen", "Background post-process failed for $index", e)
+                                    Log.e("MainScreen", "Background Exif write failed for $index", e)
                                 }
                             }
                         }
@@ -342,6 +341,9 @@ private fun MainAppContent() {
         var currentRemainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
 
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+        
+        // インターバル開始時にGPS位置情報を1回だけ取得（毎コマの遅延を完全排除）
+        val baseLocation = LocationHelper.getLastKnownLocation(context)
 
         isIntervalShootingActive = true
         shotCount = 0
@@ -356,7 +358,7 @@ private fun MainAppContent() {
                     remainingShots = currentRemainingShots
                 }
 
-                val success = captureIntervalFrame(imageCapture, shotCount, optimalIso)
+                val success = captureIntervalFrame(imageCapture, shotCount, optimalIso, baseLocation)
                 if (success) {
                     isIntervalCompleted = true
                 } else {
