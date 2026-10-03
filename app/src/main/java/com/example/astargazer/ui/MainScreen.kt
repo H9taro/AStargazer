@@ -99,8 +99,8 @@ val EXPOSURE_TIMES_SECONDS = listOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
 /**
  * 露出時間のフォーマット
  */
-fun formatExposureSeconds(seconds: Double): String {
-    return if (seconds % 1.0 == 0.0) {
+val formatExposureSeconds: (Double) -> String = { seconds ->
+    if (seconds % 1.0 == 0.0) {
         "${seconds.toInt()}秒"
     } else {
         "${seconds}秒"
@@ -236,6 +236,7 @@ private fun MainAppContent() {
     var isIntervalShootingActive by remember { mutableStateOf(false) }
     var shotCount by remember { mutableIntStateOf(0) }
     var remainingShots by remember { mutableIntStateOf(0) }
+    var elapsedSeconds by remember { mutableIntStateOf(0) }
 
     var currentStep by remember { mutableStateOf(WorkflowStep.DARK_FRAME_NOTICE) }
 
@@ -244,6 +245,17 @@ private fun MainAppContent() {
 
     var statusMessage by remember {
         mutableStateOf("露出時間を選択し、レンズを覆ってシャッターを押してください（ダーク撮影）。")
+    }
+
+    // インターバル撮影中の経過時間タイマー
+    LaunchedEffect(isIntervalShootingActive) {
+        if (isIntervalShootingActive) {
+            elapsedSeconds = 0
+            while (isIntervalShootingActive) {
+                delay(1000L)
+                elapsedSeconds++
+            }
+        }
     }
 
     // 露出時間が変更されたとき、すでに同じ秒数のダークフレームがあれば案内メッセージに反映
@@ -261,6 +273,7 @@ private fun MainAppContent() {
         isSetupCompleted = false
         isIntervalCompleted = false
         isIntervalShootingActive = false
+        elapsedSeconds = 0
         currentStep = WorkflowStep.DARK_FRAME_NOTICE
         capturedTestBitmap = null
 
@@ -332,6 +345,7 @@ private fun MainAppContent() {
 
         isIntervalShootingActive = true
         shotCount = 0
+        elapsedSeconds = 0
         remainingShots = currentRemainingShots
 
         coroutineScope.launch {
@@ -628,6 +642,7 @@ private fun MainAppContent() {
                         isIntervalActive = isIntervalShootingActive,
                         shotCount = shotCount,
                         remainingShots = remainingShots,
+                        elapsedSeconds = elapsedSeconds,
                         selectedExposureSeconds = selectedExposureSeconds,
                         onTriggerShutter = onTriggerShutter,
                         onCameraBound = { camera, imageCapture ->
@@ -921,13 +936,14 @@ private fun SetupTabContent(
 }
 
 /**
- * インターバル撮影タブコンテンツ（タブ名称を「保存」から「仕上げ」に変更）
+ * インターバル撮影タブコンテンツ（撮影数の右に開始からの経過秒数を追加）
  */
 @Composable
 private fun IntervalTabContent(
     isIntervalActive: Boolean,
     shotCount: Int,
     remainingShots: Int,
+    elapsedSeconds: Int,
     selectedExposureSeconds: Double,
     onTriggerShutter: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
@@ -939,7 +955,7 @@ private fun IntervalTabContent(
         )
         PortraitCropGuidesOverlay()
 
-        // ヘッダー（左側に「タイトル・撮影数」、右側に「露出時間・残り撮影可能枚数」を整列）
+        // ヘッダー（2行目：撮影数の右に経過秒数を追加）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -972,13 +988,13 @@ private fun IntervalTabContent(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "撮影数: ${shotCount}コマ",
+                    text = "撮影数: ${shotCount}コマ  (経過: ${elapsedSeconds}秒)",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "残り撮影可能: 約${remainingShots}枚",
+                    text = "残り: 約${remainingShots}枚",
                     color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
