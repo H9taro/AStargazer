@@ -224,6 +224,9 @@ private fun MainAppContent() {
     var isSetupCompleted by remember { mutableStateOf(false) }
     var isIntervalCompleted by remember { mutableStateOf(false) }
 
+    // 前回の撮影画像ファイルがストレージに残っているかどうか
+    val hasExistingIntervalFiles = remember { StorageHelper.getIntervalImageFiles(context).isNotEmpty() }
+
     var cameraInstance by remember { mutableStateOf<Camera?>(null) }
     var imageCaptureInstance by remember { mutableStateOf<ImageCapture?>(null) }
 
@@ -548,7 +551,7 @@ private fun MainAppContent() {
                     val enabled = when (tab) {
                         MainMenuTab.SETUP -> true
                         MainMenuTab.INTERVAL -> isSetupCompleted
-                        MainMenuTab.SAVE -> isIntervalCompleted
+                        MainMenuTab.SAVE -> isIntervalCompleted || hasExistingIntervalFiles
                     }
 
                     NavigationBarItem(
