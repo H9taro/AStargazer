@@ -366,7 +366,7 @@ private fun MainAppContent() {
         }
     }
 
-    // ダークフレーム撮影実行（1秒待機で手ブレ防止）
+    // ダークフレーム撮影実行（手ブレに関係ないため待機なしで即時撮影）
     fun runDarkFrameShooting() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -380,35 +380,31 @@ private fun MainAppContent() {
         val outputOptions = ImageCapture.OutputFileOptions.Builder(darkFrameFile).build()
         val executor = ContextCompat.getMainExecutor(context)
 
-        coroutineScope.launch {
-            delay(1000L)
+        imageCapture.takePicture(
+            outputOptions,
+            executor,
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    isProcessing = false
+                    val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
+                        file = darkFrameFile,
+                        iso = optimalIso,
+                        exposureSeconds = selectedExposureSeconds
+                    )
+                    FileViewerHelper.scanFile(context, darkFrameFile)
 
-            imageCapture.takePicture(
-                outputOptions,
-                executor,
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        isProcessing = false
-                        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
-                        com.example.astargazer.util.ExifHelper.saveExifAttributes(
-                            file = darkFrameFile,
-                            iso = optimalIso,
-                            exposureSeconds = selectedExposureSeconds
-                        )
-                        FileViewerHelper.scanFile(context, darkFrameFile)
-
-                        statusMessage = "ダークフレーム撮影完了。レンズカバーを外し、星空に向けてシャッターを押してください。"
-                        currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
-                    }
-
-                    override fun onError(exception: ImageCaptureException) {
-                        Log.e("MainScreen", "Dark frame capture failed", exception)
-                        isProcessing = false
-                        statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
-                    }
+                    statusMessage = "ダークフレーム撮影完了。レンズカバーを外し、星空に向けてシャッターを押してください。"
+                    currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
                 }
-            )
-        }
+
+                override fun onError(exception: ImageCaptureException) {
+                    Log.e("MainScreen", "Dark frame capture failed", exception)
+                    isProcessing = false
+                    statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
+                }
+            }
+        )
     }
 
     // 試写と自動調整（1秒待機で手ブレ防止、最大画質 ＆ ノイズ減算適用）
@@ -437,6 +433,7 @@ private fun MainAppContent() {
         val executor = ContextCompat.getMainExecutor(context)
 
         coroutineScope.launch {
+            // ★ 試写のシャッター押下直後の1秒待機（手ブレ対策）
             delay(1000L)
 
             imageCapture.takePicture(
