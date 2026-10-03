@@ -3,6 +3,8 @@ package com.example.astargazer.util
 import android.content.Context
 import android.os.Environment
 import android.os.StatFs
+import android.util.Log
+import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import java.util.Locale
 
@@ -73,6 +75,26 @@ object StorageHelper {
     fun getDarkFrameFile(context: Context? = null): File {
         val dir = getPublicAStargazerDir("DarkFrame")
         return File(dir, "dark_frame.png")
+    }
+
+    /**
+     * 保存されているダークフレームファイルが存在し、かつ指定された露出時間と一致するかチェックする
+     */
+    fun hasValidDarkFrame(context: Context?, exposureSeconds: Double): Boolean {
+        val darkFile = getDarkFrameFile(context)
+        if (!darkFile.exists()) return false
+
+        try {
+            val exif = ExifInterface(darkFile.absolutePath)
+            val exposureTimeStr = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)
+            if (exposureTimeStr != null) {
+                val savedExposure = exposureTimeStr.toDoubleOrNull() ?: 0.0
+                return kotlin.math.abs(savedExposure - exposureSeconds) < 0.01
+            }
+        } catch (e: Exception) {
+            Log.e("StorageHelper", "Failed to read dark frame exif", e)
+        }
+        return false
     }
 
     /**

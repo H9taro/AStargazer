@@ -118,7 +118,7 @@ enum class MainMenuTab(val label: String) {
 }
 
 /**
- * 撮影前設定ワークフロー（ダークフレーム先、試写後）
+ * 撮影前設定ワークフロー
  */
 enum class WorkflowStep {
     DARK_FRAME_NOTICE,              // 1a. ダークフレーム撮影案内（レンズを覆う）
@@ -227,15 +227,32 @@ private fun MainAppContent() {
         mutableStateOf("露出時間を選択し、レンズを覆ってシャッターを押してください（ダーク撮影）。")
     }
 
+    // 露出時間が変更されたときに、同じ秒数のダークフレームが存在するかチェックして自動スキップ
+    LaunchedEffect(selectedExposureSeconds) {
+        if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+            currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+            statusMessage = "一致する露出時間(${formatExposureSeconds(selectedExposureSeconds)})のダークフレームが存在するため、ダーク撮影をスキップします。北極星を合わせてシャッターを押してください。"
+        } else {
+            currentStep = WorkflowStep.DARK_FRAME_NOTICE
+            statusMessage = "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: レンズを覆ってシャッターを押してください（ダーク撮影）。"
+        }
+    }
+
     // 設定キャンセル・リセット
     fun cancelSetup() {
         isProcessing = false
         isSetupCompleted = false
         isIntervalCompleted = false
         isIntervalShootingActive = false
-        currentStep = WorkflowStep.DARK_FRAME_NOTICE
         capturedTestBitmap = null
-        statusMessage = "設定をリセットしました。レンズを覆ってシャッターを押してください。"
+
+        if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+            currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+            statusMessage = "設定をリセットしました。既存のダークフレームを流用します。北極星を合わせてシャッターを押してください。"
+        } else {
+            currentStep = WorkflowStep.DARK_FRAME_NOTICE
+            statusMessage = "設定をリセットしました。レンズを覆ってシャッターを押してください。"
+        }
         selectedTab = MainMenuTab.SETUP
     }
 
@@ -499,7 +516,9 @@ private fun MainAppContent() {
                         onClick = {
                             selectedTab = tab
                             if (tab == MainMenuTab.SETUP) {
-                                currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                                if (!StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+                                    currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                                }
                             }
                         },
                         label = {
@@ -669,7 +688,7 @@ private fun SetupTabContent(
             PortraitCropGuidesOverlay()
         }
 
-        // ヘッダーレイアウト（露出時間設定）
+        // ヘッダーレイアウト（ステータス表示: 撮影前設定）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -683,7 +702,7 @@ private fun SetupTabContent(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "AStargazer (最大画質モード)",
+                    text = "撮影前設定",
                     color = Color.White,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
@@ -849,9 +868,9 @@ private fun IntervalTabContent(
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Text(
-                text = "AStargazer - インターバル撮影 (最大画質)",
+                text = "インターバル撮影",
                 color = Color.White,
-                fontSize = 16.sp,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(4.dp))
@@ -937,7 +956,7 @@ private fun SaveTabContent(
     var lastExportedFile by remember { mutableStateOf<File?>(null) }
     var exportStatusMessage by remember {
         mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ (最大画質)\n保存する形式を選択してください。(ダークフレーム自動減算適用)"
+            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存する形式を選択してください。(ダークフレーム自動減算適用)"
             else "保存可能な撮影済み画像がありません。"
         )
     }
@@ -1019,7 +1038,7 @@ private fun SaveTabContent(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "AStargazer - ファイル保存・出力",
+                text = "保存",
                 color = Color.White,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
