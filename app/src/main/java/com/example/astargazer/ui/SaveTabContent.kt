@@ -132,6 +132,7 @@ fun SaveTabContent(
                     imageFiles = intervalFiles,
                     outputFile = outputFile,
                     darkFrameFile = darkFrameFile.exists().let { if (it) darkFrameFile else null },
+                    resolutionLabel = selectedMode.resolutionLabel,
                     frameRate = 30,
                     onProgress = { p -> progress = p }
                 )
@@ -352,7 +353,7 @@ fun SaveTabContent(
 }
 
 /**
- * 選択された画質に応じたクロップ枠線をプレビュー上に表示するオーバーレイ（2Kを廃止）
+ * 選択された画質に応じたクロップ枠線をプレビュー上に表示するオーバーレイ
  */
 @Composable
 private fun SaveCropGuideOverlay(

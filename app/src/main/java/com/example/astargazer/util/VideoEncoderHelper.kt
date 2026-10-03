@@ -18,7 +18,7 @@ import java.io.File
 object VideoEncoderHelper {
 
     /**
-     * 静止画ファイル群から MP4 タイムラプス動画を生成する
+     * 静止画ファイル群から選択された解像度（HD, Full HD, 4K）のクロップを適用して MP4 タイムラプス動画を生成する
      * テレビ等の視聴用に、縦位置画像を時計回りに90度回転させて横長（ランドスケープ）動画として出力する
      * 右下に各コマの撮影日時（秒まで）、左下にアプリ名 "AStargazer" のテロップを焼き込む
      */
@@ -26,6 +26,7 @@ object VideoEncoderHelper {
         imageFiles: List<File>,
         outputFile: File,
         darkFrameFile: File? = null,
+        resolutionLabel: String = "Full HD (1080p)",
         frameRate: Int = 30,
         onProgress: (Float) -> Unit = {}
     ): Boolean {
@@ -45,14 +46,34 @@ object VideoEncoderHelper {
                 null
             }
 
-            // テレビ等の視聴用に、常に横長（ランドスケープ: 幅1920, 高さ1080 フルHD相当）でエンコード
-            val targetWidth = 1920
-            val targetHeight = 1080
+            // 選択された解像度に応じたターゲット解像度とクロップスケールを決定
+            // (※ プレビューの SaveCropGuideOverlay と完全に一致させる)
+            val targetWidth: Int
+            val targetHeight: Int
+            val cropScale: Float
+
+            when (resolutionLabel) {
+                "HD (720p)" -> {
+                    targetWidth = 1280
+                    targetHeight = 720
+                    cropScale = 0.60f
+                }
+                "4K" -> {
+                    targetWidth = 3840
+                    targetHeight = 2160
+                    cropScale = 0.90f
+                }
+                else -> { // Full HD (1080p)
+                    targetWidth = 1920
+                    targetHeight = 1080
+                    cropScale = 0.75f
+                }
+            }
 
             val mimeType = MediaFormat.MIMETYPE_VIDEO_AVC
             val format = MediaFormat.createVideoFormat(mimeType, targetWidth, targetHeight).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, 6_000_000) // 6 Mbps
+                setInteger(MediaFormat.KEY_BIT_RATE, if (targetWidth >= 3840) 15_000_000 else 6_000_000) // 4Kは15Mbps、他は6Mbps
                 setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // 1秒キーフレーム
             }
@@ -74,10 +95,13 @@ object VideoEncoderHelper {
             val dstRect = Rect(0, 0, targetWidth, targetHeight)
             val rotateMatrix = Matrix().apply { postRotate(90f) } // 時計回り90度回転（テレビ視聴用正立化）
 
-            // テロップ用ペイント設定
+            // テロップ用ペイント設定（解像度に応じてフォントサイズをスケーリング）
+            val textSize = if (targetWidth >= 3840) 76f else 38f
+            val padding = if (targetWidth >= 3840) 96f else 48f
+
             val paint = Paint().apply {
                 color = Color.WHITE
-                textSize = 38f
+                this.textSize = textSize
                 isAntiAlias = true
                 typeface = Typeface.DEFAULT_BOLD
                 setShadowLayer(6f, 2f, 2f, Color.BLACK)
@@ -88,17 +112,28 @@ object VideoEncoderHelper {
                 val subtractedBitmap = ImageCompositor.subtractDarkFrame(rawBitmap, darkBitmap)
                 if (rawBitmap != subtractedBitmap) rawBitmap.recycle()
 
-                // 縦位置画像を時計回りに90度回転させて横長画像に変換
+                // 1. クロップ処理（プレビューの枠線に合わせて中央部分を切り出し）
+                val srcWidth = subtractedBitmap.width
+                val srcHeight = subtractedBitmap.height
+                val cropWidth = (srcWidth * cropScale).toInt()
+                val cropHeight = (srcHeight * cropScale).toInt()
+                val cropLeft = (srcWidth - cropWidth) / 2
+                val cropTop = (srcHeight - cropHeight) / 2
+
+                val croppedBitmap = Bitmap.createBitmap(subtractedBitmap, cropLeft, cropTop, cropWidth, cropHeight)
+                if (subtractedBitmap != croppedBitmap) subtractedBitmap.recycle()
+
+                // 2. クロップ済み画像を時計回りに90度回転させて横長画像に変換
                 val rotatedBitmap = Bitmap.createBitmap(
-                    subtractedBitmap,
+                    croppedBitmap,
                     0, 0,
-                    subtractedBitmap.width, subtractedBitmap.height,
+                    croppedBitmap.width, croppedBitmap.height,
                     rotateMatrix,
                     true
                 )
-                if (subtractedBitmap != rotatedBitmap) subtractedBitmap.recycle()
+                if (croppedBitmap != rotatedBitmap) croppedBitmap.recycle()
 
-                // 作業用 Mutable Bitmap を作成してテロップ（ウォーターマーク）を焼き込む
+                // 3. 作業用 Mutable Bitmap を作成してテロップ（ウォーターマーク）を焼き込む
                 val frameWithText = rotatedBitmap.copy(Bitmap.Config.ARGB_8888, true)
                 rotatedBitmap.recycle()
 
@@ -107,13 +142,13 @@ object VideoEncoderHelper {
                 val appNameStr = "AStargazer"
 
                 // 左下にアプリ名
-                canvas.drawText(appNameStr, 48f, targetHeight - 48f, paint)
+                canvas.drawText(appNameStr, padding, targetHeight - padding, paint)
 
                 // 右下に各コマの撮影日時
                 val dateTextWidth = paint.measureText(dateTimeStr)
-                canvas.drawText(dateTimeStr, targetWidth - dateTextWidth - 48f, targetHeight - 48f, paint)
+                canvas.drawText(dateTimeStr, targetWidth - dateTextWidth - padding, targetHeight - padding, paint)
 
-                // Surface への描画 (横長 1920x1080)
+                // 4. Surface への描画 (ターゲット解像度にスケーリング)
                 val surfaceCanvas: Canvas = inputSurface.lockCanvas(null)
                 surfaceCanvas.drawColor(Color.BLACK)
                 val srcRect = Rect(0, 0, frameWithText.width, frameWithText.height)
