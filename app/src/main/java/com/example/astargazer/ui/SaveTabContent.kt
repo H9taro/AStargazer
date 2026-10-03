@@ -1,12 +1,12 @@
 package com.example.astargazer.ui
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -38,12 +38,12 @@ import kotlin.math.abs
 /**
  * 出力画質（解像度）の選択肢
  */
-enum class ExportResolution(val label: String, val width: Int, val height: Int) {
-    HD("HD (720p)", 720, 1280),
-    FULLHD("Full HD (1080p)", 1080, 1920),
-    QHD_2K("2K", 1440, 2560),
-    UHD_4K("4K", 2160, 3840),
-    MAX("最高画質 (オリジナル)", 0, 0);
+enum class ExportResolution(val label: String) {
+    HD("HD (720p)"),
+    FULLHD("Full HD (1080p)"),
+    QHD_2K("2K"),
+    UHD_4K("4K"),
+    MAX("最高画質 (オリジナル)");
 
     fun next(excludeMax: Boolean): ExportResolution {
         val entries = if (excludeMax) listOf(HD, FULLHD, QHD_2K, UHD_4K) else entries
@@ -52,6 +52,16 @@ enum class ExportResolution(val label: String, val width: Int, val height: Int) 
             entries[currentIndex + 1]
         } else {
             entries[0]
+        }
+    }
+
+    fun prev(excludeMax: Boolean): ExportResolution {
+        val entries = if (excludeMax) listOf(HD, FULLHD, QHD_2K, UHD_4K) else entries
+        val currentIndex = entries.indexOf(this)
+        return if (currentIndex > 0) {
+            entries[currentIndex - 1]
+        } else {
+            entries[entries.size - 1]
         }
     }
 }
@@ -75,22 +85,29 @@ fun SaveTabContent(
     var selectedResolution by remember { mutableStateOf(ExportResolution.FULLHD) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
 
+    // プレビュー表示する画像コマのインデックス
+    var currentImageIndex by remember { mutableIntStateOf(0) }
+
     var isGenerating by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
     var statusMessage by remember {
         mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n横スワイプで画質切替が可能です。"
+            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n横スワイプ: コマ切替 | 縦スワイプ: 画質切替"
             else "保存可能な撮影済み画像がありません。"
         )
     }
 
-    // 先頭画像のBitmapロード
-    val firstImageBitmap = remember(intervalFiles) {
-        val firstFile = intervalFiles.firstOrNull()
-        if (firstFile != null && firstFile.exists()) {
-            try {
-                BitmapFactory.decodeFile(firstFile.absolutePath)
-            } catch (e: Exception) {
+    // 現在のインデックスのBitmapをロード
+    val currentBitmap = remember(intervalFiles, currentImageIndex) {
+        if (intervalFiles.isNotEmpty() && currentImageIndex in intervalFiles.indices) {
+            val file = intervalFiles[currentImageIndex]
+            if (file.exists()) {
+                try {
+                    BitmapFactory.decodeFile(file.absolutePath)
+                } catch (e: Exception) {
+                    null
+                }
+            } else {
                 null
             }
         } else {
@@ -99,6 +116,7 @@ fun SaveTabContent(
     }
 
     var totalDragX by remember { mutableFloatStateOf(0f) }
+    var totalDragY by remember { mutableFloatStateOf(0f) }
 
     // 保存処理の実行
     fun executeExport() {
@@ -148,18 +166,44 @@ fun SaveTabContent(
     Surface(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(selectedFormat) {
+            .pointerInput(intervalFiles) {
                 detectHorizontalDragGestures(
                     onDragStart = { totalDragX = 0f },
                     onDragEnd = {
-                        if (abs(totalDragX) > 80f && !isGenerating) {
-                            val excludeMax = (selectedFormat == ExportFormat.TIMELAPSE)
-                            selectedResolution = selectedResolution.next(excludeMax)
+                        if (abs(totalDragX) > 60f && intervalFiles.isNotEmpty() && !isGenerating) {
+                            if (totalDragX > 0f) {
+                                // 右スワイプ: 前のコマ
+                                currentImageIndex = if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
+                            } else {
+                                // 左スワイプ: 次のコマ
+                                currentImageIndex = if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
+                            }
                         }
                     },
                     onHorizontalDrag = { change, dragAmount ->
                         change.consume()
                         totalDragX += dragAmount
+                    }
+                )
+            }
+            .pointerInput(selectedFormat) {
+                detectVerticalDragGestures(
+                    onDragStart = { totalDragY = 0f },
+                    onDragEnd = {
+                        if (abs(totalDragY) > 60f && !isGenerating) {
+                            val excludeMax = (selectedFormat == ExportFormat.TIMELAPSE)
+                            if (totalDragY > 0f) {
+                                // 下スワイプ: 前の画質
+                                selectedResolution = selectedResolution.prev(excludeMax)
+                            } else {
+                                // 上スワイプ: 次の画質
+                                selectedResolution = selectedResolution.next(excludeMax)
+                            }
+                        }
+                    },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragY += dragAmount
                     }
                 )
             },
@@ -180,7 +224,7 @@ fun SaveTabContent(
                 modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
             )
 
-            // 1. 保存形式選択プルダウン ＆ 画質表示（横スワイプ案内）
+            // 1. 保存形式選択プルダウン ＆ 画質表示（縦スワイプ案内）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -220,7 +264,6 @@ fun SaveTabContent(
                                 onClick = {
                                     selectedFormat = format
                                     isDropdownExpanded = false
-                                    // タイムラプス選択時に現在 MAX なら FullHD にフォールバック
                                     if (format == ExportFormat.TIMELAPSE && selectedResolution == ExportResolution.MAX) {
                                         selectedResolution = ExportResolution.FULLHD
                                     }
@@ -232,7 +275,7 @@ fun SaveTabContent(
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                // 画質表示バッジ（横スワイプ切替）
+                // 画質表示バッジ（縦スワイプ切替）
                 Surface(
                     color = Color(0xFF1E88E5).copy(alpha = 0.3f),
                     shape = RoundedCornerShape(8.dp),
@@ -243,7 +286,7 @@ fun SaveTabContent(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text(text = "画質 (←スワイプ→)", color = Color.LightGray, fontSize = 9.sp)
+                        Text(text = "画質 (↕縦スワイプ)", color = Color.LightGray, fontSize = 9.sp)
                         Text(text = selectedResolution.label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -251,7 +294,7 @@ fun SaveTabContent(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 2. プレビュー（先頭画像 ＋ クロップ枠線）
+            // 2. プレビュー（コマ画像 ＋ クロップ枠線）
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -259,15 +302,33 @@ fun SaveTabContent(
                     .background(Color.DarkGray, RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                if (firstImageBitmap != null) {
+                if (currentBitmap != null) {
                     Image(
-                        bitmap = firstImageBitmap.asImageBitmap(),
-                        contentDescription = "先頭画像プレビュー",
+                        bitmap = currentBitmap.asImageBitmap(),
+                        contentDescription = "プレビュー画像",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit
                     )
                     // 画質に応じたクロップ枠のオーバーレイ
                     SaveCropGuideOverlay(selectedResolution = selectedResolution)
+
+                    // コマ番号表示バッジ
+                    if (intervalFiles.isNotEmpty()) {
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "📷 ${currentImageIndex + 1} / ${intervalFiles.size}コマ (↔横スワイプで切替)",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
                 } else {
                     Text(
                         text = "プレビュー画像がありません",
@@ -308,7 +369,7 @@ fun SaveTabContent(
                         Text(
                             text = "${(progress * 100).toInt()}% 完了",
                             color = Color.LightGray,
-                            fontSize = 11.sp
+                            fontSize = 12.sp
                         )
                     }
                 }
