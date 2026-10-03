@@ -778,6 +778,26 @@ private fun SetupTabContent(
             }
         }
 
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 120.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(
+                text = statusMessage,
+                color = Color.White,
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            )
+        }
+
         // シャッターボタン
         Box(
             modifier = Modifier
@@ -821,7 +841,7 @@ private fun SetupTabContent(
 }
 
 /**
- * インターバル撮影タブコンテンツ（撮影数・残り撮影可能枚数をヘッダーに統合し、プレビューのオーバーレイ文言を廃止）
+ * インターバル撮影タブコンテンツ（ヘッダーの情報をきれいに左右対称に整列）
  */
 @Composable
 private fun IntervalTabContent(
@@ -839,7 +859,7 @@ private fun IntervalTabContent(
         )
         PortraitCropGuidesOverlay()
 
-        // ヘッダーに撮影数と残り撮影可能枚数を集約（プレビューのオーバーレイ文言を廃止）
+        // ヘッダー（左側に「タイトル・撮影数」、右側に「露出時間・残り撮影可能枚数」を整列）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -859,18 +879,32 @@ private fun IntervalTabContent(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "撮影数: ${shotCount}コマ | 残り撮影可能: 約${remainingShots}枚",
-                    color = Color(0xFF00E676),
+                    text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)}",
+                    color = Color.LightGray,
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.End
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "撮影数: ${shotCount}コマ",
+                    color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
+                Text(
+                    text = "残り撮影可能: 約${remainingShots}枚",
+                    color = Color(0xFF00E676),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.End
+                )
             }
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)}",
-                color = Color.LightGray,
-                fontSize = 11.sp
-            )
         }
 
         // シャッターボタン（停止マーク対応）
