@@ -20,7 +20,7 @@ object VideoEncoderHelper {
     /**
      * 静止画ファイル群から選択された解像度（HD, Full HD, 4K）の9:16クロップを適用して MP4 タイムラプス動画を生成する
      * テレビ等の視聴用に、縦位置画像を時計回りに90度回転させて横長（ランドスケープ）動画として出力する
-     * 右下に各コマの撮影日時（秒まで）、左下にアプリ名 "AStargazer" のテロップを焼き込む
+     * 左下に「解像度 - 撮影日時」、右下にアプリ名 "AStargazer" のテロップを焼き込む
      */
     fun createTimelapseVideo(
         imageFiles: List<File>,
@@ -46,36 +46,41 @@ object VideoEncoderHelper {
                 null
             }
 
-            // 選択された解像度に応じたターゲット解像度とクロップスケールを決定
-            // (※ プレビューの SaveCropGuideOverlay と完全に一致させる)
+            // 選択された解像度に応じたターゲット解像度とクロップスケールを厳密に決定
             val targetWidth: Int
             val targetHeight: Int
             val cropScale: Float
+            val shortResName: String
 
-            when (resolutionLabel) {
+            when (resolutionLabel.trim()) {
                 "HD (720p)" -> {
                     targetWidth = 1280
                     targetHeight = 720
                     cropScale = 0.60f
+                    shortResName = "HD"
                 }
                 "4K" -> {
                     targetWidth = 3840
                     targetHeight = 2160
                     cropScale = 0.90f
+                    shortResName = "4K"
                 }
                 else -> { // Full HD (1080p)
                     targetWidth = 1920
                     targetHeight = 1080
                     cropScale = 0.75f
+                    shortResName = "Full HD"
                 }
             }
+
+            Log.d("VideoEncoder", "Generating timelapse with resolution: $resolutionLabel (Short: $shortResName), target: ${targetWidth}x${targetHeight}, scale: $cropScale")
 
             val mimeType = MediaFormat.MIMETYPE_VIDEO_AVC
             val format = MediaFormat.createVideoFormat(mimeType, targetWidth, targetHeight).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, if (targetWidth >= 3840) 15_000_000 else 6_000_000) // 4Kは15Mbps、他は6Mbps
+                setInteger(MediaFormat.KEY_BIT_RATE, if (targetWidth >= 3840) 15_000_000 else 6_000_000)
                 setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // 1秒キーフレーム
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
 
             val encoder = MediaCodec.createEncoderByType(mimeType)
@@ -84,7 +89,7 @@ object VideoEncoderHelper {
             encoder.start()
 
             val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4).apply {
-                setOrientationHint(0) // 既に横長に変換済みの方向を維持
+                setOrientationHint(0)
             }
             var trackIndex = -1
             var muxerStarted = false
@@ -93,9 +98,9 @@ object VideoEncoderHelper {
             val frameDurationUs = 1_000_000L / frameRate
 
             val dstRect = Rect(0, 0, targetWidth, targetHeight)
-            val rotateMatrix = Matrix().apply { postRotate(90f) } // 時計回り90度回転（テレビ視聴用正立化）
+            val rotateMatrix = Matrix().apply { postRotate(90f) } // 時計回り90度回転
 
-            // テロップ用ペイント設定（解像度に応じてフォントサイズをスケーリング）
+            // テロップ用ペイント設定
             val textSize = if (targetWidth >= 3840) 76f else 38f
             val padding = if (targetWidth >= 3840) 96f else 48f
 
@@ -112,7 +117,7 @@ object VideoEncoderHelper {
                 val subtractedBitmap = ImageCompositor.subtractDarkFrame(rawBitmap, darkBitmap)
                 if (rawBitmap != subtractedBitmap) rawBitmap.recycle()
 
-                // 1. プレビューの SaveCropGuideOverlay と完全に一致する 9:16 クロップ計算
+                // 1. クロップ処理（選択された解像度に応じたスケールで中央を切り出し）
                 val srcWidth = subtractedBitmap.width
                 val srcHeight = subtractedBitmap.height
                 val cropHeight = (srcHeight * cropScale).toInt()
@@ -129,7 +134,7 @@ object VideoEncoderHelper {
                 )
                 if (subtractedBitmap != croppedBitmap) subtractedBitmap.recycle()
 
-                // 2. クロップ済み画像を時計回りに90度回転させて横長画像に変換
+                // 2. 回転
                 val rotatedBitmap = Bitmap.createBitmap(
                     croppedBitmap,
                     0, 0,
@@ -139,22 +144,23 @@ object VideoEncoderHelper {
                 )
                 if (croppedBitmap != rotatedBitmap) croppedBitmap.recycle()
 
-                // 3. 作業用 Mutable Bitmap を作成してテロップ（ウォーターマーク）を焼き込む
+                // 3. テロップ焼き込み
                 val frameWithText = rotatedBitmap.copy(Bitmap.Config.ARGB_8888, true)
                 rotatedBitmap.recycle()
 
                 val canvas = Canvas(frameWithText)
                 val dateTimeStr = ExifHelper.getDateTime(file)
-                val appNameStr = "AStargazer"
+                val leftText = "$shortResName - $dateTimeStr"
+                val rightText = "AStargazer"
 
-                // 左下にアプリ名
-                canvas.drawText(appNameStr, padding, targetHeight - padding, paint)
+                // 左下：解像度 - 日時
+                canvas.drawText(leftText, padding, targetHeight - padding, paint)
 
-                // 右下に各コマの撮影日時
-                val dateTextWidth = paint.measureText(dateTimeStr)
-                canvas.drawText(dateTimeStr, targetWidth - dateTextWidth - padding, targetHeight - padding, paint)
+                // 右下：アプリ名
+                val rightTextWidth = paint.measureText(rightText)
+                canvas.drawText(rightText, targetWidth - rightTextWidth - padding, targetHeight - padding, paint)
 
-                // 4. Surface への描画 (ターゲット解像度にスケーリング)
+                // 4. Surface への描画
                 val surfaceCanvas: Canvas = inputSurface.lockCanvas(null)
                 surfaceCanvas.drawColor(Color.BLACK)
                 val srcRect = Rect(0, 0, frameWithText.width, frameWithText.height)
@@ -196,10 +202,8 @@ object VideoEncoderHelper {
 
             darkBitmap?.recycle()
 
-            // EOS (流し込み終了通知)
             encoder.signalEndOfInputStream()
 
-            // 残りバッファの完全ドレイン
             var eosReached = false
             while (!eosReached) {
                 val encoderStatus = encoder.dequeueOutputBuffer(bufferInfo, 10_000L)

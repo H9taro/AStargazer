@@ -66,7 +66,7 @@ object ImageCompositor {
     /**
      * 複数枚の静止画ファイル群から比較明合成 (Lighten Blend) 画像を生成する
      * ダークフレーム画像が存在する場合は自動的にダーク減算処理を実行する
-     * 右下に「撮影日時の開始と終了」、左下にアプリ名 "AStargazer" のテロップを焼き込む
+     * 左下に「最高画質 - 開始: [日時] / 終了: [日時]」、右下にアプリ名 "AStargazer" のテロップを焼き込む
      *
      * @param imageFiles ソース画像ファイルリスト
      * @param outputFile 出力先 JPEG ファイル
@@ -154,38 +154,32 @@ object ImageCompositor {
             val canvas = Canvas(resultBitmap)
             val paint = Paint().apply {
                 color = Color.WHITE
-                textSize = (height.toFloat() / 45f).coerceAtLeast(32f) // 画像サイズに応じたフォントサイズ
+                textSize = (height.toFloat() / 50f).coerceAtLeast(36f)
                 isAntiAlias = true
                 typeface = Typeface.DEFAULT_BOLD
                 setShadowLayer(6f, 2f, 2f, Color.BLACK)
             }
 
-            val appNameStr = "AStargazer"
             val startDateTime = ExifHelper.getDateTime(imageFiles.first())
             val endDateTime = ExifHelper.getDateTime(imageFiles.last())
-            val startStr = "開始: $startDateTime"
-            val endStr = "終了: $endDateTime"
+            val leftText = "最高画質 - 開始: $startDateTime / 終了: $endDateTime"
+            val rightText = "AStargazer"
 
             val padding = 48f
-            val lineHeight = paint.textSize * 1.3f
 
-            // 左下にアプリ名
-            canvas.drawText(appNameStr, padding, height - padding - lineHeight, paint)
+            // 左下：最高画質 - 開始日時 / 終了日時
+            canvas.drawText(leftText, padding, height - padding, paint)
 
-            // 右下に開始・終了撮影日時
-            val startWidth = paint.measureText(startStr)
-            val endWidth = paint.measureText(endStr)
-            val maxRightWidth = maxOf(startWidth, endWidth)
-
-            canvas.drawText(startStr, width - maxRightWidth - padding, height - padding - lineHeight, paint)
-            canvas.drawText(endStr, width - maxRightWidth - padding, height - padding, paint)
+            // 右下：アプリ名
+            val rightTextWidth = paint.measureText(rightText)
+            canvas.drawText(rightText, width - rightTextWidth - padding, height - padding, paint)
 
             FileOutputStream(outputFile).use { out ->
                 resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
 
             resultBitmap.recycle()
-            Log.d("ImageCompositor", "Lighten blend composite with watermarks created at ${outputFile.absolutePath}")
+            Log.d("ImageCompositor", "Lighten blend composite with updated watermarks created at ${outputFile.absolutePath}")
             return true
         } catch (e: Exception) {
             Log.e("ImageCompositor", "Failed to create lighten blend composite", e)
