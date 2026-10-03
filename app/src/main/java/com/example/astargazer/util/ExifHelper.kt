@@ -1,6 +1,5 @@
 package com.example.astargazer.util
 
-import android.location.Location
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
@@ -11,17 +10,17 @@ import java.util.Locale
 object ExifHelper {
 
     /**
-     * JPEG/PNG ファイルに撮影パラメータ (Exif メタデータ及ひ GPS 位置情報) を自動書き込み・記録する
-     * @param file 保存された画像ファイル
+     * 画像ファイルに撮影パラメータ (Exif メータデータ) および GPS 位置情報を自動書き込み・記録する
+     * @param file 保存された画像ファイル (PNG / JPEG)
      * @param iso 撮影に使用された ISO 感度 (例: 1600)
      * @param exposureSeconds 撮影に使用された露出時間 (秒, 例: 4.0)
-     * @param location GPS 位置情報 (Location, オプション)
+     * @param location 取得された GPS 位置情報 (Location?)
      */
     fun saveExifAttributes(
         file: File,
         iso: Int,
         exposureSeconds: Double,
-        location: Location? = null
+        location: android.location.Location? = null
     ) {
         if (!file.exists()) return
 
@@ -34,12 +33,12 @@ object ExifHelper {
             val formattedDate = exifDateFormat.format(now)
             val formattedSubSec = subSecFormat.format(now)
 
-            // 1. 撮影日時 (秒単位まで記録: 例 2026:10:02 22:53:45)
+            // 1. 撮影日時
             exif.setAttribute(ExifInterface.TAG_DATETIME, formattedDate)
             exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, formattedDate)
             exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, formattedDate)
 
-            // 2. 秒未満・ミリ秒精度 (TAG_SUBSEC_TIME)
+            // 2. 秒未満・ミリ秒精度
             exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME, formattedSubSec)
             exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, formattedSubSec)
             exif.setAttribute(ExifInterface.TAG_SUBSEC_TIME_DIGITIZED, formattedSubSec)
@@ -61,13 +60,14 @@ object ExifHelper {
             // 7. アプリ名
             exif.setAttribute(ExifInterface.TAG_SOFTWARE, "AStargazer 1.0")
 
-            // 8. GPS 位置情報の書き込み (Location が存在する場合)
+            // 8. GPS 位置情報の書き込み (ExifInterface の組み込みメソッド)
             if (location != null) {
                 exif.setGpsInfo(location)
+                Log.d("ExifHelper", "Attached GPS to ${file.name}: Lat=${location.latitude}, Lon=${location.longitude}, Alt=${location.altitude}")
             }
 
             exif.saveAttributes()
-            Log.d("ExifHelper", "Saved Exif data to ${file.name}: ISO=$iso, Exposure=${exposureSeconds}s, GPS=${location?.latitude},${location?.longitude}")
+            Log.d("ExifHelper", "Saved Exif data to ${file.name}: ISO=$iso, Exposure=${exposureSeconds}s")
         } catch (e: Exception) {
             Log.e("ExifHelper", "Failed to save Exif data for ${file.name}", e)
         }

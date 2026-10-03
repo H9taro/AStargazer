@@ -11,39 +11,36 @@ import androidx.core.content.ContextCompat
 object LocationHelper {
 
     /**
-     * 利用可能な最新の GPS / Network 位置情報を取得する
+     * 現在のデバイスの最新のGPS位置情報（Location）を取得する
+     * パーミッションがない場合や取得できない場合は null を返す
      */
     fun getLastKnownLocation(context: Context): Location? {
-        val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val fineGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-        if (!hasFine && !hasCoarse) {
+        if (!fineGranted && !coarseGranted) {
+            Log.w("LocationHelper", "Location permissions are not granted.")
             return null
         }
 
         try {
             val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
 
-            // GPS または Network プロバイダから最後の既知の位置情報を取得
             val gpsLocation = if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            } else {
-                null
-            }
+            } else null
 
-            val networkLocation = if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            val netLocation = if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            } else {
-                null
-            }
+            } else null
 
-            // より新しい（または有効な）ロケーションを返す
             return when {
-                gpsLocation != null && networkLocation != null -> {
-                    if (gpsLocation.time > networkLocation.time) gpsLocation else networkLocation
+                gpsLocation != null && netLocation != null -> {
+                    if (gpsLocation.time > netLocation.time) gpsLocation else netLocation
                 }
                 gpsLocation != null -> gpsLocation
-                else -> networkLocation
+                netLocation != null -> netLocation
+                else -> null
             }
         } catch (e: Exception) {
             Log.e("LocationHelper", "Failed to get last known location", e)

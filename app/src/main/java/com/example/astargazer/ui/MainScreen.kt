@@ -132,27 +132,25 @@ enum class WorkflowStep {
 fun MainScreen() {
     val context = LocalContext.current
 
-    // カメラおよび位置情報のパーミッション状態
+    // パーミッション状態 (カメラ & 位置情報)
     var hasPermissions by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
-                    (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED)
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         )
     }
 
-    val launcher = rememberLauncherForActivityResult(
+    val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
-        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
-        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
-        hasPermissions = cameraGranted && (fineGranted || coarseGranted)
+        val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        hasPermissions = cameraGranted && locationGranted
     }
 
     LaunchedEffect(Unit) {
         if (!hasPermissions) {
-            launcher.launch(
+            permissionLauncher.launch(
                 arrayOf(
                     Manifest.permission.CAMERA,
                     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -164,7 +162,7 @@ fun MainScreen() {
 
     if (!hasPermissions) {
         PermissionRequestContent {
-            launcher.launch(
+            permissionLauncher.launch(
                 arrayOf(
                     Manifest.permission.CAMERA,
                     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -199,7 +197,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "星空の写真にGPS位置情報を自動記録するため、カメラと位置情報の権限を使用します。",
+                text = "星空の試写、インターバル撮影、および写真へのGPS位置情報付与を行うため、権限が必要です。",
                 color = Color.LightGray,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
@@ -271,7 +269,7 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // インターバル1コマ撮影（最大画質・GPS Exif付与）
+    // インターバル1コマ撮影（最大画質・クロップ/減算なし、初回の1秒待機で手ブレ防止、GPS位置情報付与）
     suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
         return suspendCancellableCoroutine { continuation ->
             coroutineScope.launch {
@@ -282,6 +280,7 @@ private fun MainAppContent() {
                 val outputFile = StorageHelper.createIntervalImageFile(context, index)
                 val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
                 val executor = ContextCompat.getMainExecutor(context)
+                val currentLocation = LocationHelper.getLastKnownLocation(context)
 
                 imageCapture.takePicture(
                     outputOptions,
@@ -293,12 +292,11 @@ private fun MainAppContent() {
                             coroutineScope.launch(Dispatchers.IO) {
                                 try {
                                     FileViewerHelper.scanFile(context, outputFile)
-                                    val location = LocationHelper.getLastKnownLocation(context)
                                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                                         file = outputFile,
                                         iso = iso,
                                         exposureSeconds = selectedExposureSeconds,
-                                        location = location
+                                        location = currentLocation
                                     )
                                 } catch (e: Exception) {
                                     Log.e("MainScreen", "Background post-process failed for $index", e)
@@ -387,7 +385,7 @@ private fun MainAppContent() {
         }
     }
 
-    // ダークフレーム撮影実行（GPS付与）
+    // ダークフレーム撮影実行（GPS情報付与）
     fun runDarkFrameShooting() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -400,6 +398,7 @@ private fun MainAppContent() {
         val darkFrameFile = StorageHelper.getDarkFrameFile(context)
         val outputOptions = ImageCapture.OutputFileOptions.Builder(darkFrameFile).build()
         val executor = ContextCompat.getMainExecutor(context)
+        val currentLocation = LocationHelper.getLastKnownLocation(context)
 
         imageCapture.takePicture(
             outputOptions,
@@ -408,12 +407,11 @@ private fun MainAppContent() {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     isProcessing = false
                     val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
-                    val location = LocationHelper.getLastKnownLocation(context)
                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                         file = darkFrameFile,
                         iso = optimalIso,
                         exposureSeconds = selectedExposureSeconds,
-                        location = location
+                        location = currentLocation
                     )
                     FileViewerHelper.scanFile(context, darkFrameFile)
 
@@ -430,7 +428,7 @@ private fun MainAppContent() {
         )
     }
 
-    // 試写と自動調整（GPS付与・ノイズ減算適用）
+    // 試写と自動調整（1秒待機で手ブレ防止、最大画質 ＆ ノイズ減算適用 ＆ GPS情報付与）
     fun runTestShootingAndAutoAdjust() {
         val camera = cameraInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -454,6 +452,7 @@ private fun MainAppContent() {
         )
 
         val executor = ContextCompat.getMainExecutor(context)
+        val currentLocation = LocationHelper.getLastKnownLocation(context)
 
         coroutineScope.launch {
             delay(1000L)
@@ -489,12 +488,11 @@ private fun MainAppContent() {
                                     FileOutputStream(testFile).use { out ->
                                         finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                                     }
-                                    val location = LocationHelper.getLastKnownLocation(context)
                                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                                         file = testFile,
                                         iso = optimalIso,
                                         exposureSeconds = selectedExposureSeconds,
-                                        location = location
+                                        location = currentLocation
                                     )
                                     FileViewerHelper.scanFile(context, testFile)
                                 } catch (e: Exception) {
