@@ -146,18 +146,15 @@ object ImageCompositor {
 
             darkBitmap?.recycle()
 
-            // 合成結果 Bitmap の生成 (確実にミュータブルにする)
+            // 合成結果 Bitmap の生成（デフォルトでミュータブル）
             val resultBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
                 setPixels(compositePixels, 0, width, 0, 0, width, height)
             }
 
-            // テロップ（ウォーターマーク）の焼き込み
-            val mutableBitmap = resultBitmap.copy(Bitmap.Config.ARGB_8888, true)
-            resultBitmap.recycle()
-
-            val canvas = Canvas(mutableBitmap)
-            val bmpWidth = mutableBitmap.width
-            val bmpHeight = mutableBitmap.height
+            // テロップ（ウォーターマーク）の焼き込み（コピーを作らず直接 resultBitmap の Canvas を使用）
+            val canvas = Canvas(resultBitmap)
+            val bmpWidth = resultBitmap.width
+            val bmpHeight = resultBitmap.height
 
             val textSize = (bmpHeight.toFloat() / 45f).coerceAtLeast(36f)
             val padding = bmpWidth * 0.025f
@@ -185,11 +182,11 @@ object ImageCompositor {
             canvas.drawText(rightText, rightX, leftY, paint)
 
             FileOutputStream(outputFile).use { out ->
-                mutableBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
 
-            mutableBitmap.recycle()
-            Log.d("ImageCompositor", "Lighten blend composite with watermarks created at ${outputFile.absolutePath}")
+            resultBitmap.recycle()
+            Log.d("ImageCompositor", "Lighten blend composite with watermarks created successfully at ${outputFile.absolutePath}")
             return true
         } catch (e: Exception) {
             Log.e("ImageCompositor", "Failed to create lighten blend composite", e)
