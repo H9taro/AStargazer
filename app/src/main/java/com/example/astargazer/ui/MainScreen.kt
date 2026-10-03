@@ -42,7 +42,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -82,12 +81,10 @@ import com.example.astargazer.util.FileViewerHelper
 import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.StorageHelper
-import com.example.astargazer.util.VideoEncoderHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
 import kotlin.coroutines.resume
@@ -742,7 +739,7 @@ private fun SetupTabContent(
                         ),
                         modifier = Modifier
                             .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                            .width(135.dp) // プルダウンの幅を拡大して1行で表示
+                            .width(135.dp)
                     )
 
                     ExposedDropdownMenu(
@@ -940,189 +937,6 @@ private fun IntervalTabContent(
                                 .background(Color.Red, CircleShape)
                         )
                     }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 保存タブコンテンツ
- */
-@Composable
-private fun SaveTabContent(
-    context: android.content.Context,
-    coroutineScope: kotlinx.coroutines.CoroutineScope
-) {
-    val intervalFiles = remember { StorageHelper.getIntervalImageFiles(context) }
-    var isGenerating by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
-    var lastExportedFile by remember { mutableStateOf<File?>(null) }
-    var exportStatusMessage by remember {
-        mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存する形式を選択してください。(ダークフレーム自動減算適用)"
-            else "保存可能な撮影済み画像がありません。"
-        )
-    }
-
-    // タイムラプス動画出力
-    fun generateTimelapseVideo() {
-        if (intervalFiles.isEmpty()) return
-        isGenerating = true
-        progress = 0f
-        exportStatusMessage = "タイムラプス動画(*.mp4)を生成中..."
-
-        coroutineScope.launch(Dispatchers.IO) {
-            val outputFile = StorageHelper.getTimelapseVideoFile(context)
-            val darkFrameFile = StorageHelper.getDarkFrameFile(context)
-
-            val success = VideoEncoderHelper.createTimelapseVideo(
-                imageFiles = intervalFiles,
-                outputFile = outputFile,
-                darkFrameFile = darkFrameFile,
-                frameRate = 30,
-                onProgress = { p -> progress = p }
-            )
-
-            withContext(Dispatchers.Main) {
-                isGenerating = false
-                if (success) {
-                    FileViewerHelper.scanFile(context, outputFile)
-                    lastExportedFile = outputFile
-                    exportStatusMessage = "タイムラプス動画の生成が完了しました！\n保存先: ${outputFile.name}"
-                    FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
-                } else {
-                    exportStatusMessage = "タイムラプス動画の生成に失敗しました。"
-                }
-            }
-        }
-    }
-
-    // 比較明合成出力
-    fun generateLightenBlendComposite() {
-        if (intervalFiles.isEmpty()) return
-        isGenerating = true
-        progress = 0f
-        exportStatusMessage = "比較明合成静止画(*.jpg)を生成中..."
-
-        coroutineScope.launch(Dispatchers.IO) {
-            val outputFile = StorageHelper.getCompositeImageFile(context)
-            val darkFrameFile = StorageHelper.getDarkFrameFile(context)
-
-            val success = ImageCompositor.createLightenBlendComposite(
-                imageFiles = intervalFiles,
-                outputFile = outputFile,
-                darkFrameFile = darkFrameFile,
-                onProgress = { p -> progress = p }
-            )
-
-            withContext(Dispatchers.Main) {
-                isGenerating = false
-                if (success) {
-                    FileViewerHelper.scanFile(context, outputFile)
-                    lastExportedFile = outputFile
-                    exportStatusMessage = "比較明合成画像の生成が完了しました！\n保存先: ${outputFile.name}"
-                    FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
-                } else {
-                    exportStatusMessage = "比較明合成画像の生成に失敗しました。"
-                }
-            }
-        }
-    }
-
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = Color.Black
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "保存",
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = exportStatusMessage,
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        textAlign = TextAlign.Center
-                    )
-
-                    if (isGenerating) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = Color(0xFF1E88E5),
-                            trackColor = Color.Gray
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "${(progress * 100).toInt()}% 完了",
-                            color = Color.LightGray,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Button(
-                onClick = { generateTimelapseVideo() },
-                enabled = !isGenerating && intervalFiles.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5), disabledContainerColor = Color.DarkGray),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text(text = "🎬 タイムラプス動画(*.mp4)を出力", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Button(
-                onClick = { generateLightenBlendComposite() },
-                enabled = !isGenerating && intervalFiles.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047), disabledContainerColor = Color.DarkGray),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text(text = "🌌 比較明合成の静止画(*.jpg)を出力", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            }
-
-            if (lastExportedFile != null) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(
-                    onClick = { FileViewerHelper.openInGoogleFilesOrViewer(context, lastExportedFile!!) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(text = "📁 Google Filesで保存ファイルを開く", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
