@@ -82,6 +82,7 @@ import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.StorageHelper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -251,40 +252,46 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // インターバル1コマ撮影（最大画質・クロップ/減算なし）
+    // インターバル1コマ撮影（最大画質・クロップ/減算なし、初回の1秒待機で手ブレ防止）
     suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
         return suspendCancellableCoroutine { continuation ->
-            val outputFile = StorageHelper.createIntervalImageFile(context, index)
-            val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
-            val executor = ContextCompat.getMainExecutor(context)
+            coroutineScope.launch {
+                if (index == 1) {
+                    delay(1000L)
+                }
 
-            imageCapture.takePicture(
-                outputOptions,
-                executor,
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                        if (continuation.isActive) continuation.resume(true)
+                val outputFile = StorageHelper.createIntervalImageFile(context, index)
+                val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
+                val executor = ContextCompat.getMainExecutor(context)
 
-                        coroutineScope.launch(Dispatchers.IO) {
-                            try {
-                                FileViewerHelper.scanFile(context, outputFile)
-                                com.example.astargazer.util.ExifHelper.saveExifAttributes(
-                                    file = outputFile,
-                                    iso = iso,
-                                    exposureSeconds = selectedExposureSeconds
-                                )
-                            } catch (e: Exception) {
-                                Log.e("MainScreen", "Background post-process failed for $index", e)
+                imageCapture.takePicture(
+                    outputOptions,
+                    executor,
+                    object : ImageCapture.OnImageSavedCallback {
+                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                            if (continuation.isActive) continuation.resume(true)
+
+                            coroutineScope.launch(Dispatchers.IO) {
+                                try {
+                                    FileViewerHelper.scanFile(context, outputFile)
+                                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
+                                        file = outputFile,
+                                        iso = iso,
+                                        exposureSeconds = selectedExposureSeconds
+                                    )
+                                } catch (e: Exception) {
+                                    Log.e("MainScreen", "Background post-process failed for $index", e)
+                                }
                             }
                         }
-                    }
 
-                    override fun onError(exception: ImageCaptureException) {
-                        Log.e("MainScreen", "Interval frame $index capture error", exception)
-                        if (continuation.isActive) continuation.resume(false)
+                        override fun onError(exception: ImageCaptureException) {
+                            Log.e("MainScreen", "Interval frame $index capture error", exception)
+                            if (continuation.isActive) continuation.resume(false)
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     }
 
@@ -359,7 +366,7 @@ private fun MainAppContent() {
         }
     }
 
-    // ダークフレーム撮影実行
+    // ダークフレーム撮影実行（1秒待機で手ブレ防止）
     fun runDarkFrameShooting() {
         val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -373,34 +380,38 @@ private fun MainAppContent() {
         val outputOptions = ImageCapture.OutputFileOptions.Builder(darkFrameFile).build()
         val executor = ContextCompat.getMainExecutor(context)
 
-        imageCapture.takePicture(
-            outputOptions,
-            executor,
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    isProcessing = false
-                    val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
-                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
-                        file = darkFrameFile,
-                        iso = optimalIso,
-                        exposureSeconds = selectedExposureSeconds
-                    )
-                    FileViewerHelper.scanFile(context, darkFrameFile)
+        coroutineScope.launch {
+            delay(1000L)
 
-                    statusMessage = "ダークフレーム撮影完了。レンズカバーを外し、星空に向けてシャッターを押してください。"
-                    currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
-                }
+            imageCapture.takePicture(
+                outputOptions,
+                executor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        isProcessing = false
+                        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+                        com.example.astargazer.util.ExifHelper.saveExifAttributes(
+                            file = darkFrameFile,
+                            iso = optimalIso,
+                            exposureSeconds = selectedExposureSeconds
+                        )
+                        FileViewerHelper.scanFile(context, darkFrameFile)
 
-                override fun onError(exception: ImageCaptureException) {
-                    Log.e("MainScreen", "Dark frame capture failed", exception)
-                    isProcessing = false
-                    statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
+                        statusMessage = "ダークフレーム撮影完了。レンズカバーを外し、星空に向けてシャッターを押してください。"
+                        currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        Log.e("MainScreen", "Dark frame capture failed", exception)
+                        isProcessing = false
+                        statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
-    // 試写と自動調整（最大画質 ＆ ノイズ減算適用）
+    // 試写と自動調整（1秒待機で手ブレ防止、最大画質 ＆ ノイズ減算適用）
     fun runTestShootingAndAutoAdjust() {
         val camera = cameraInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -424,69 +435,74 @@ private fun MainAppContent() {
         )
 
         val executor = ContextCompat.getMainExecutor(context)
-        imageCapture.takePicture(
-            executor,
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(image: ImageProxy) {
-                    coroutineScope.launch(Dispatchers.IO) {
-                        val bitmap = BitmapUtils.imageProxyToBitmap(image)
-                        image.close()
 
-                        if (bitmap != null) {
-                            val darkFile = StorageHelper.getDarkFrameFile(context)
-                            val finalBitmap = if (darkFile.exists()) {
-                                val darkBmp = BitmapFactory.decodeFile(darkFile.absolutePath)
-                                if (darkBmp != null) {
-                                    val subtracted = ImageCompositor.subtractDarkFrame(bitmap, darkBmp)
-                                    bitmap.recycle()
-                                    darkBmp.recycle()
-                                    subtracted
+        coroutineScope.launch {
+            delay(1000L)
+
+            imageCapture.takePicture(
+                executor,
+                object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(image: ImageProxy) {
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val bitmap = BitmapUtils.imageProxyToBitmap(image)
+                            image.close()
+
+                            if (bitmap != null) {
+                                val darkFile = StorageHelper.getDarkFrameFile(context)
+                                val finalBitmap = if (darkFile.exists()) {
+                                    val darkBmp = BitmapFactory.decodeFile(darkFile.absolutePath)
+                                    if (darkBmp != null) {
+                                        val subtracted = ImageCompositor.subtractDarkFrame(bitmap, darkBmp)
+                                        bitmap.recycle()
+                                        darkBmp.recycle()
+                                        subtracted
+                                    } else {
+                                        bitmap
+                                    }
                                 } else {
                                     bitmap
                                 }
-                            } else {
-                                bitmap
-                            }
 
-                            capturedTestBitmap = finalBitmap
+                                capturedTestBitmap = finalBitmap
 
-                            val testFile = StorageHelper.getTestShootingFile()
-                            try {
-                                FileOutputStream(testFile).use { out ->
-                                    finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                                val testFile = StorageHelper.getTestShootingFile()
+                                try {
+                                    FileOutputStream(testFile).use { out ->
+                                        finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                                    }
+                                    com.example.astargazer.util.ExifHelper.saveExifAttributes(testFile, optimalIso, selectedExposureSeconds)
+                                    FileViewerHelper.scanFile(context, testFile)
+                                } catch (e: Exception) {
+                                    Log.e("MainScreen", "Failed to save test image", e)
                                 }
-                                com.example.astargazer.util.ExifHelper.saveExifAttributes(testFile, optimalIso, selectedExposureSeconds)
-                                FileViewerHelper.scanFile(context, testFile)
-                            } catch (e: Exception) {
-                                Log.e("MainScreen", "Failed to save test image", e)
-                            }
 
-                            val score = ImageContrastAnalyzer.calculateContrastScore(finalBitmap)
-                            val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
+                                val score = ImageContrastAnalyzer.calculateContrastScore(finalBitmap)
+                                val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
 
-                            withContext(Dispatchers.Main) {
-                                isProcessing = false
-                                statusMessage = "試写調整完了 (スコア: $scoreFormatted, ノイズ減算済)。設定完了！"
-                                currentStep = WorkflowStep.SETUP_COMPLETED
-                                isSetupCompleted = true
-                                selectedTab = MainMenuTab.INTERVAL
-                            }
-                        } else {
-                            withContext(Dispatchers.Main) {
-                                isProcessing = false
-                                statusMessage = "試写画像の取得に失敗しました。"
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    statusMessage = "試写調整完了 (スコア: $scoreFormatted, ノイズ減算済)。設定完了！"
+                                    currentStep = WorkflowStep.SETUP_COMPLETED
+                                    isSetupCompleted = true
+                                    selectedTab = MainMenuTab.INTERVAL
+                                }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    isProcessing = false
+                                    statusMessage = "試写画像の取得に失敗しました。"
+                                }
                             }
                         }
                     }
-                }
 
-                override fun onError(exception: ImageCaptureException) {
-                    Log.e("MainScreen", "Test capture failed", exception)
-                    isProcessing = false
-                    statusMessage = "試写撮影エラー: ${exception.message}"
+                    override fun onError(exception: ImageCaptureException) {
+                        Log.e("MainScreen", "Test capture failed", exception)
+                        isProcessing = false
+                        statusMessage = "試写撮影エラー: ${exception.message}"
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
     // ワークフロー監視
