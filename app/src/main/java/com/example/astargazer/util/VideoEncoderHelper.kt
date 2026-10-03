@@ -20,7 +20,7 @@ object VideoEncoderHelper {
     /**
      * 静止画ファイル群から選択された解像度（HD, Full HD, 4K）の9:16クロップを適用して MP4 タイムラプス動画を生成する
      * テレビ等の視聴用に、縦位置画像を時計回りに90度回転させて横長（ランドスケープ）動画として出力する
-     * 左下に「解像度 - 撮影日時」、右下にアプリ名 "AStargazer" のテロップを焼き込む
+     * 左下に「解像度 - 撮影日時」、右下にアプリ名 "AStargazer" のテロップを正確な位置に焼き込む
      */
     fun createTimelapseVideo(
         imageFiles: List<File>,
@@ -46,10 +46,11 @@ object VideoEncoderHelper {
                 null
             }
 
-            // 選択された解像度に応じたターゲット解像度とクロップスケールを厳密に決定
+            // 選択された解像度に応じたターゲット解像度、クロップスケール、ビットレートを厳密に決定
             val targetWidth: Int
             val targetHeight: Int
             val cropScale: Float
+            val bitRate: Int
             val shortResName: String
 
             when (resolutionLabel.trim()) {
@@ -57,28 +58,31 @@ object VideoEncoderHelper {
                     targetWidth = 1280
                     targetHeight = 720
                     cropScale = 0.60f
+                    bitRate = 3_000_000 // 3 Mbps
                     shortResName = "HD"
                 }
                 "4K" -> {
                     targetWidth = 3840
                     targetHeight = 2160
                     cropScale = 0.90f
+                    bitRate = 15_000_000 // 15 Mbps
                     shortResName = "4K"
                 }
                 else -> { // Full HD (1080p)
                     targetWidth = 1920
                     targetHeight = 1080
                     cropScale = 0.75f
+                    bitRate = 6_000_000 // 6 Mbps
                     shortResName = "Full HD"
                 }
             }
 
-            Log.d("VideoEncoder", "Generating timelapse with resolution: $resolutionLabel (Short: $shortResName), target: ${targetWidth}x${targetHeight}, scale: $cropScale")
+            Log.d("VideoEncoder", "Timelapse Config: $resolutionLabel -> ${targetWidth}x${targetHeight}, Bitrate: $bitRate")
 
             val mimeType = MediaFormat.MIMETYPE_VIDEO_AVC
             val format = MediaFormat.createVideoFormat(mimeType, targetWidth, targetHeight).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, if (targetWidth >= 3840) 15_000_000 else 6_000_000)
+                setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
@@ -100,24 +104,12 @@ object VideoEncoderHelper {
             val dstRect = Rect(0, 0, targetWidth, targetHeight)
             val rotateMatrix = Matrix().apply { postRotate(90f) } // 時計回り90度回転
 
-            // テロップ用ペイント設定
-            val textSize = if (targetWidth >= 3840) 76f else 38f
-            val padding = if (targetWidth >= 3840) 96f else 48f
-
-            val paint = Paint().apply {
-                color = Color.WHITE
-                this.textSize = textSize
-                isAntiAlias = true
-                typeface = Typeface.DEFAULT_BOLD
-                setShadowLayer(6f, 2f, 2f, Color.BLACK)
-            }
-
             for ((index, file) in imageFiles.withIndex()) {
                 val rawBitmap = BitmapFactory.decodeFile(file.absolutePath) ?: continue
                 val subtractedBitmap = ImageCompositor.subtractDarkFrame(rawBitmap, darkBitmap)
                 if (rawBitmap != subtractedBitmap) rawBitmap.recycle()
 
-                // 1. クロップ処理（選択された解像度に応じたスケールで中央を切り出し）
+                // 1. プレビューの SaveCropGuideOverlay と完全に一致する 9:16 クロップ計算
                 val srcWidth = subtractedBitmap.width
                 val srcHeight = subtractedBitmap.height
                 val cropHeight = (srcHeight * cropScale).toInt()
@@ -134,7 +126,7 @@ object VideoEncoderHelper {
                 )
                 if (subtractedBitmap != croppedBitmap) subtractedBitmap.recycle()
 
-                // 2. 回転
+                // 2. 回転（クロップ画像を横長に変換）
                 val rotatedBitmap = Bitmap.createBitmap(
                     croppedBitmap,
                     0, 0,
@@ -144,26 +136,43 @@ object VideoEncoderHelper {
                 )
                 if (croppedBitmap != rotatedBitmap) croppedBitmap.recycle()
 
-                // 3. テロップ焼き込み
+                // 3. 作業用 Mutable Bitmap を作成してテロップ（ウォーターマーク）を焼き込む
                 val frameWithText = rotatedBitmap.copy(Bitmap.Config.ARGB_8888, true)
                 rotatedBitmap.recycle()
 
                 val canvas = Canvas(frameWithText)
+                val bmpWidth = frameWithText.width
+                val bmpHeight = frameWithText.height
+
+                // 解像度に応じたフォントサイズとパディングを実 Bitmap のサイズを基準に計算
+                val textSize = (bmpHeight.toFloat() / 28f).coerceAtLeast(28f)
+                val padding = bmpWidth * 0.025f // 左右上下に 2.5% のマージン
+
+                val paint = Paint().apply {
+                    color = Color.WHITE
+                    this.textSize = textSize
+                    isAntiAlias = true
+                    typeface = Typeface.DEFAULT_BOLD
+                    setShadowLayer(6f, 2f, 2f, Color.BLACK)
+                }
+
                 val dateTimeStr = ExifHelper.getDateTime(file)
                 val leftText = "$shortResName - $dateTimeStr"
                 val rightText = "AStargazer"
 
                 // 左下：解像度 - 日時
-                canvas.drawText(leftText, padding, targetHeight - padding, paint)
+                val leftY = bmpHeight - padding
+                canvas.drawText(leftText, padding, leftY, paint)
 
-                // 右下：アプリ名
+                // 右下：アプリ名 (実 Bitmap の幅から文字幅とパディングを引いた正確な右端位置)
                 val rightTextWidth = paint.measureText(rightText)
-                canvas.drawText(rightText, targetWidth - rightTextWidth - padding, targetHeight - padding, paint)
+                val rightX = (bmpWidth - rightTextWidth - padding).coerceAtLeast(padding)
+                canvas.drawText(rightText, rightX, leftY, paint)
 
                 // 4. Surface への描画
                 val surfaceCanvas: Canvas = inputSurface.lockCanvas(null)
                 surfaceCanvas.drawColor(Color.BLACK)
-                val srcRect = Rect(0, 0, frameWithText.width, frameWithText.height)
+                val srcRect = Rect(0, 0, bmpWidth, bmpHeight)
                 surfaceCanvas.drawBitmap(frameWithText, srcRect, dstRect, null)
                 inputSurface.unlockCanvasAndPost(surfaceCanvas)
                 frameWithText.recycle()
