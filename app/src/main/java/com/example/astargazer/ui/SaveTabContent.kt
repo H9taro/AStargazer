@@ -36,12 +36,11 @@ import java.io.File
 import kotlin.math.abs
 
 /**
- * 出力モード（縦スワイプで切り替え）
+ * 出力モード（縦スワイプで切り替え、2Kを廃止）
  * 1. HD（タイムラプス）
  * 2. Full HD（タイムラプス）
- * 3. 2K（タイムラプス）
- * 4. 4K（タイムラプス）
- * 5. 最高画質（比較明合成）
+ * 3. 4K（タイムラプス）
+ * 4. 最高画質（比較明合成）
  */
 enum class ExportMode(
     val label: String,
@@ -50,7 +49,6 @@ enum class ExportMode(
 ) {
     HD_TIMELAPSE("HD（タイムラプス）", true, "HD (720p)"),
     FULLHD_TIMELAPSE("Full HD（タイムラプス）", true, "Full HD (1080p)"),
-    QHD_2K_TIMELAPSE("2K（タイムラプス）", true, "2K"),
     UHD_4K_TIMELAPSE("4K（タイムラプス）", true, "4K"),
     MAX_COMPOSITE("最高画質（比較明合成）", false, "最高画質");
 
@@ -354,7 +352,7 @@ fun SaveTabContent(
 }
 
 /**
- * 選択された画質に応じたクロップ枠線をプレビュー上に表示するオーバーレイ
+ * 選択された画質に応じたクロップ枠線をプレビュー上に表示するオーバーレイ（2Kを廃止）
  */
 @Composable
 private fun SaveCropGuideOverlay(
@@ -371,7 +369,6 @@ private fun SaveCropGuideOverlay(
         val scale = when (resolutionLabel) {
             "HD (720p)" -> 0.60f
             "Full HD (1080p)" -> 0.75f
-            "2K" -> 0.82f
             "4K" -> 0.90f
             else -> 1.0f
         }
@@ -379,7 +376,6 @@ private fun SaveCropGuideOverlay(
         val borderColor = when (resolutionLabel) {
             "HD (720p)" -> Color(0xFFFF5252)
             "Full HD (1080p)" -> Color(0xFFFFEB3B)
-            "2K" -> Color(0xFF00E676)
             "4K" -> Color(0xFF00B0FF)
             else -> Color.Transparent
         }
