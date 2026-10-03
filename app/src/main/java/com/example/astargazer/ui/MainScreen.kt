@@ -17,8 +17,6 @@ import androidx.camera.core.ImageProxy
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -57,7 +55,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,7 +68,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -100,23 +96,6 @@ import kotlin.coroutines.resume
  * 露出時間の選択肢（秒数: 0.25秒, 0.5秒, 1秒, 2秒, 4秒, 8秒, 15秒, 30秒）
  */
 val EXPOSURE_TIMES_SECONDS = listOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
-
-/**
- * 撮影解像度/クロップサイズの選択肢
- */
-enum class CaptureResolution(val label: String, val shortLabel: String, val width: Int, val height: Int) {
-    FHD("フルHD (1920×1080 / 16:9)", "フルHD 1080p", 1920, 1080),
-    FULL("最大画質 (センサー解像度)", "最大画質", 0, 0),
-    HD("HD画質 (1280×720 / 16:9)", "HD 720p", 1280, 720);
-
-    fun next(): CaptureResolution {
-        return when (this) {
-            FHD -> FULL
-            FULL -> HD
-            HD -> FHD
-        }
-    }
-}
 
 /**
  * 露出時間のフォーマット
@@ -243,37 +222,24 @@ private fun MainAppContent() {
 
     var selectedExposureSeconds by remember { mutableDoubleStateOf(4.0) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
-    var selectedResolution by remember { mutableStateOf(CaptureResolution.FHD) }
 
     var statusMessage by remember {
-        mutableStateOf("露出時間・画質を選択し、レンズを覆ってシャッターを押してください（ダーク撮影）。")
+        mutableStateOf("露出時間を選択し、レンズを覆ってシャッターを押してください（ダーク撮影）。")
     }
 
-    // 画像クロップ・保存共通関数
-    fun processAndSaveFile(outputFile: File, rawFile: File) {
-        if (selectedResolution == CaptureResolution.FULL) {
-            FileViewerHelper.scanFile(context, rawFile)
-            return
-        }
-
-        try {
-            val srcBitmap = BitmapFactory.decodeFile(rawFile.absolutePath)
-            if (srcBitmap != null) {
-                val cropped = BitmapUtils.cropTo169(srcBitmap, selectedResolution.width, selectedResolution.height)
-                srcBitmap.recycle()
-
-                FileOutputStream(outputFile).use { out ->
-                    cropped.compress(Bitmap.CompressFormat.PNG, 100, out)
-                }
-                cropped.recycle()
-                FileViewerHelper.scanFile(context, outputFile)
-            }
-        } catch (e: Exception) {
-            Log.e("MainScreen", "Crop/Save failed for ${outputFile.name}", e)
-        }
+    // 設定キャンセル・リセット
+    fun cancelSetup() {
+        isProcessing = false
+        isSetupCompleted = false
+        isIntervalCompleted = false
+        isIntervalShootingActive = false
+        currentStep = WorkflowStep.DARK_FRAME_NOTICE
+        capturedTestBitmap = null
+        statusMessage = "設定をリセットしました。レンズを覆ってシャッターを押してください。"
+        selectedTab = MainMenuTab.SETUP
     }
 
-    // インターバル1コマ撮影
+    // インターバル1コマ撮影（最大画質・クロップ/減算なし）
     suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int): Boolean {
         return suspendCancellableCoroutine { continuation ->
             val outputFile = StorageHelper.createIntervalImageFile(context, index)
@@ -289,12 +255,7 @@ private fun MainAppContent() {
 
                         coroutineScope.launch(Dispatchers.IO) {
                             try {
-                                if (selectedResolution != CaptureResolution.FULL) {
-                                    processAndSaveFile(outputFile, outputFile)
-                                } else {
-                                    FileViewerHelper.scanFile(context, outputFile)
-                                }
-
+                                FileViewerHelper.scanFile(context, outputFile)
                                 com.example.astargazer.util.ExifHelper.saveExifAttributes(
                                     file = outputFile,
                                     iso = iso,
@@ -332,7 +293,7 @@ private fun MainAppContent() {
         shotCount = 0
 
         coroutineScope.launch {
-            statusMessage = "インターバル撮影を開始しました。(画質: ${selectedResolution.shortLabel})"
+            statusMessage = "インターバル撮影を開始しました。(最大画質)"
 
             while (isIntervalShootingActive) {
                 shotCount++
@@ -350,9 +311,11 @@ private fun MainAppContent() {
         }
     }
 
-    // シャッターボタン押下アクション（ワークフロー制御）
+    // シャッターボタン押下アクション（撮影中・処理中にももう一度押すとキャンセル）
     val onTriggerShutter: () -> Unit = {
-        if (!isProcessing) {
+        if (isProcessing) {
+            cancelSetup()
+        } else {
             when (selectedTab) {
                 MainMenuTab.SETUP -> {
                     when (currentStep) {
@@ -378,17 +341,6 @@ private fun MainAppContent() {
         }
     }
 
-    // 設定キャンセル
-    fun cancelSetup() {
-        isProcessing = false
-        isSetupCompleted = false
-        isIntervalCompleted = false
-        currentStep = WorkflowStep.DARK_FRAME_NOTICE
-        capturedTestBitmap = null
-        statusMessage = "設定をリセットしました。レンズを覆ってシャッターを押してください。"
-        selectedTab = MainMenuTab.SETUP
-    }
-
     // ダークフレーム撮影実行
     fun runDarkFrameShooting() {
         val imageCapture = imageCaptureInstance ?: run {
@@ -409,10 +361,6 @@ private fun MainAppContent() {
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                     isProcessing = false
-                    if (selectedResolution != CaptureResolution.FULL) {
-                        processAndSaveFile(darkFrameFile, darkFrameFile)
-                    }
-
                     val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                         file = darkFrameFile,
@@ -434,7 +382,7 @@ private fun MainAppContent() {
         )
     }
 
-    // 試写と自動調整（ダークフレーム減算適用）
+    // 試写と自動調整（最大画質 ＆ ノイズ減算適用）
     fun runTestShootingAndAutoAdjust() {
         val camera = cameraInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
@@ -463,15 +411,10 @@ private fun MainAppContent() {
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
                     coroutineScope.launch(Dispatchers.IO) {
-                        var bitmap = BitmapUtils.imageProxyToBitmap(image)
+                        val bitmap = BitmapUtils.imageProxyToBitmap(image)
                         image.close()
 
                         if (bitmap != null) {
-                            if (selectedResolution != CaptureResolution.FULL) {
-                                bitmap = BitmapUtils.cropTo169(bitmap, selectedResolution.width, selectedResolution.height)
-                            }
-
-                            // ダークフレーム減算の適用
                             val darkFile = StorageHelper.getDarkFrameFile(context)
                             val finalBitmap = if (darkFile.exists()) {
                                 val darkBmp = BitmapFactory.decodeFile(darkFile.absolutePath)
@@ -606,15 +549,12 @@ private fun MainAppContent() {
                         currentStep = currentStep,
                         capturedTestBitmap = capturedTestBitmap,
                         selectedExposureSeconds = selectedExposureSeconds,
-                        selectedResolution = selectedResolution,
                         isDropdownExpanded = isDropdownExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
                         onExposureChange = { selectedExposureSeconds = it },
-                        onResolutionChange = { selectedResolution = it },
                         onDropdownToggle = { isDropdownExpanded = it },
                         onShutterClick = onTriggerShutter,
-                        onCancelSetup = { cancelSetup() },
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
                             imageCaptureInstance = imageCapture
@@ -627,10 +567,8 @@ private fun MainAppContent() {
                         isIntervalActive = isIntervalShootingActive,
                         shotCount = shotCount,
                         selectedExposureSeconds = selectedExposureSeconds,
-                        selectedResolution = selectedResolution,
                         statusMessage = statusMessage,
                         onTriggerShutter = onTriggerShutter,
-                        onResolutionChange = { selectedResolution = it },
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
                             imageCaptureInstance = imageCapture
@@ -650,69 +588,51 @@ private fun MainAppContent() {
 }
 
 /**
- * クロップガイドオーバーレイ
+ * 縦位置での 4K, Full HD, HD クロップエリア枠線を同時に表示するガイドオーバーレイ
  */
 @Composable
-private fun CropGuideOverlay(
-    selectedResolution: CaptureResolution,
+private fun PortraitCropGuidesOverlay(
     modifier: Modifier = Modifier
 ) {
-    if (selectedResolution == CaptureResolution.FULL) return
-
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val width = constraints.maxWidth.toFloat()
         val height = constraints.maxHeight.toFloat()
 
         if (width <= 0f || height <= 0f) return@BoxWithConstraints
 
-        val scale = if (selectedResolution == CaptureResolution.FHD) 0.85f else 0.65f
-
-        val maxCropWidth: Float
-        val maxCropHeight: Float
-
-        if (width * 9f > height * 16f) {
-            maxCropHeight = height * scale
-            maxCropWidth = (maxCropHeight * 16f) / 9f
-        } else {
-            maxCropWidth = width * scale
-            maxCropHeight = (maxCropWidth * 9f) / 16f
-        }
-
-        val left = (width - maxCropWidth) / 2f
-        val top = (height - maxCropHeight) / 2f
-
-        val borderColor = if (selectedResolution == CaptureResolution.FHD) Color(0xFF00E676) else Color(0xFFFF5252)
-
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val maskColor = Color.Black.copy(alpha = 0.5f)
-
-            drawRect(color = maskColor, topLeft = Offset(0f, 0f), size = Size(width, top))
-            drawRect(color = maskColor, topLeft = Offset(0f, top + maxCropHeight), size = Size(width, height - (top + maxCropHeight)))
-            drawRect(color = maskColor, topLeft = Offset(0f, top), size = Size(left, maxCropHeight))
-            drawRect(color = maskColor, topLeft = Offset(left + maxCropWidth, top), size = Size(width - (left + maxCropWidth), maxCropHeight))
-
-            drawRect(
-                color = borderColor,
-                topLeft = Offset(left, top),
-                size = Size(maxCropWidth, maxCropHeight),
-                style = Stroke(
-                    width = 2.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 12f), 0f)
-                )
+            val scales = listOf(
+                Triple(0.90f, Color(0xFF00E676), "4K ガイド"),
+                Triple(0.75f, Color(0xFFFFEB3B), "Full HD ガイド"),
+                Triple(0.60f, Color(0xFFFF5252), "HD ガイド")
             )
+
+            scales.forEach { (scale, color, _) ->
+                val guideHeight = height * scale
+                val guideWidth = (guideHeight * 9f) / 16f
+                val left = (width - guideWidth) / 2f
+                val top = (height - guideHeight) / 2f
+
+                drawRect(
+                    color = color,
+                    topLeft = Offset(left, top),
+                    size = Size(guideWidth, guideHeight),
+                    style = Stroke(
+                        width = 1.5.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                    )
+                )
+            }
         }
 
-        Text(
-            text = "✂ クロップ領域 (${selectedResolution.shortLabel})",
-            color = borderColor,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
+        Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = (top / 1.5f).coerceAtLeast(60f).dp)
-                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-        )
+                .padding(top = 80.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(text = "📏 縦位置クロップガイド (4K / Full HD / HD)", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -725,48 +645,15 @@ private fun SetupTabContent(
     currentStep: WorkflowStep,
     capturedTestBitmap: Bitmap?,
     selectedExposureSeconds: Double,
-    selectedResolution: CaptureResolution,
     isDropdownExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
     onExposureChange: (Double) -> Unit,
-    onResolutionChange: (CaptureResolution) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
     onShutterClick: () -> Unit,
-    onCancelSetup: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
-    var totalDragY by remember { mutableFloatStateOf(0f) }
-    var totalDragX by remember { mutableFloatStateOf(0f) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragStart = { totalDragY = 0f },
-                    onDragEnd = {
-                        if (totalDragY < -120f) onCancelSetup()
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragY += dragAmount
-                    }
-                )
-            }
-            .pointerInput(selectedResolution) {
-                detectHorizontalDragGestures(
-                    onDragStart = { totalDragX = 0f },
-                    onDragEnd = {
-                        if (kotlin.math.abs(totalDragX) > 80f) onResolutionChange(selectedResolution.next())
-                    },
-                    onHorizontalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragX += dragAmount
-                    }
-                )
-            }
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
         if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
             Image(
                 bitmap = capturedTestBitmap.asImageBitmap(),
@@ -779,10 +666,10 @@ private fun SetupTabContent(
                 modifier = Modifier.fillMaxSize(),
                 onCameraBound = onCameraBound
             )
-            CropGuideOverlay(selectedResolution = selectedResolution)
+            PortraitCropGuidesOverlay()
         }
 
-        // ヘッダーレイアウト
+        // ヘッダーレイアウト（露出時間設定）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -795,87 +682,58 @@ private fun SetupTabContent(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column {
-                    Text(
-                        text = "AStargazer",
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "← 横スワイプでクロップ切替 | ↑ 上スワイプでキャンセル",
-                        color = Color(0xFFFF8A80),
-                        fontSize = 9.sp
-                    )
-                }
-            }
+                Text(
+                    text = "AStargazer (最大画質モード)",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
 
-            Spacer(modifier = Modifier.height(8.dp))
+                val isChangeable = currentStep == WorkflowStep.DARK_FRAME_NOTICE
 
-            val isChangeable = currentStep == WorkflowStep.DARK_FRAME_NOTICE
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Surface(
-                    color = Color.DarkGray.copy(alpha = 0.7f),
-                    shape = RoundedCornerShape(6.dp)
+                ExposedDropdownMenuBox(
+                    expanded = isDropdownExpanded && isChangeable,
+                    onExpandedChange = {
+                        if (isChangeable) onDropdownToggle(!isDropdownExpanded)
+                    }
                 ) {
-                    Text(
-                        text = "画質: ${selectedResolution.shortLabel} ↔",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                    OutlinedTextField(
+                        value = formatExposureSeconds(selectedExposureSeconds),
+                        onValueChange = {},
+                        readOnly = true,
+                        enabled = isChangeable,
+                        label = { Text("露出時間", color = Color.LightGray, fontSize = 9.sp) },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded && isChangeable)
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            disabledTextColor = Color.LightGray,
+                            focusedBorderColor = Color(0xFF1E88E5),
+                            unfocusedBorderColor = Color.Gray,
+                            disabledBorderColor = Color.DarkGray,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent
+                        ),
+                        modifier = Modifier
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                            .width(95.dp)
                     )
-                }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ExposedDropdownMenuBox(
+                    ExposedDropdownMenu(
                         expanded = isDropdownExpanded && isChangeable,
-                        onExpandedChange = {
-                            if (isChangeable) onDropdownToggle(!isDropdownExpanded)
-                        }
+                        onDismissRequest = { onDropdownToggle(false) }
                     ) {
-                        OutlinedTextField(
-                            value = formatExposureSeconds(selectedExposureSeconds),
-                            onValueChange = {},
-                            readOnly = true,
-                            enabled = isChangeable,
-                            label = { Text("露出時間", color = Color.LightGray, fontSize = 9.sp) },
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded && isChangeable)
-                            },
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                disabledTextColor = Color.LightGray,
-                                focusedBorderColor = Color(0xFF1E88E5),
-                                unfocusedBorderColor = Color.Gray,
-                                disabledBorderColor = Color.DarkGray,
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                disabledContainerColor = Color.Transparent
-                            ),
-                            modifier = Modifier
-                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                                .width(95.dp)
-                        )
-
-                        ExposedDropdownMenu(
-                            expanded = isDropdownExpanded && isChangeable,
-                            onDismissRequest = { onDropdownToggle(false) }
-                        ) {
-                            EXPOSURE_TIMES_SECONDS.forEach { seconds ->
-                                DropdownMenuItem(
-                                    text = { Text(formatExposureSeconds(seconds), color = Color.White) },
-                                    onClick = {
-                                        onExposureChange(seconds)
-                                        onDropdownToggle(false)
-                                    }
-                                )
-                            }
+                        EXPOSURE_TIMES_SECONDS.forEach { seconds ->
+                            DropdownMenuItem(
+                                text = { Text(formatExposureSeconds(seconds), color = Color.White) },
+                                onClick = {
+                                    onExposureChange(seconds)
+                                    onDropdownToggle(false)
+                                }
+                            )
                         }
                     }
                 }
@@ -922,6 +780,7 @@ private fun SetupTabContent(
             )
         }
 
+        // シャッターボタン（処理中・撮影中は常に停止マーク）
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -931,23 +790,32 @@ private fun SetupTabContent(
         ) {
             Button(
                 onClick = onShutterClick,
-                enabled = !isProcessing,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isProcessing) Color(0xFFD32F2F) else Color.Red
+                ),
                 contentPadding = PaddingValues(0.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(60.dp)
-                        .background(Color.White, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
+                if (isProcessing) {
                     Box(
                         modifier = Modifier
-                            .size(52.dp)
-                            .background(Color.Red, CircleShape)
+                            .size(28.dp)
+                            .background(Color.White, RoundedCornerShape(4.dp))
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(60.dp)
+                            .background(Color.White, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .background(Color.Red, CircleShape)
+                        )
+                    }
                 }
             }
         }
@@ -962,37 +830,16 @@ private fun IntervalTabContent(
     isIntervalActive: Boolean,
     shotCount: Int,
     selectedExposureSeconds: Double,
-    selectedResolution: CaptureResolution,
     statusMessage: String,
     onTriggerShutter: () -> Unit,
-    onResolutionChange: (CaptureResolution) -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
-    var totalDragX by remember { mutableFloatStateOf(0f) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(selectedResolution) {
-                detectHorizontalDragGestures(
-                    onDragStart = { totalDragX = 0f },
-                    onDragEnd = {
-                        if (kotlin.math.abs(totalDragX) > 80f && !isIntervalActive) {
-                            onResolutionChange(selectedResolution.next())
-                        }
-                    },
-                    onHorizontalDrag = { change, dragAmount ->
-                        change.consume()
-                        totalDragX += dragAmount
-                    }
-                )
-            }
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
         CameraPreview(
             modifier = Modifier.fillMaxSize(),
             onCameraBound = onCameraBound
         )
-        CropGuideOverlay(selectedResolution = selectedResolution)
+        PortraitCropGuidesOverlay()
 
         Column(
             modifier = Modifier
@@ -1002,14 +849,14 @@ private fun IntervalTabContent(
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Text(
-                text = "AStargazer - インターバル撮影",
+                text = "AStargazer - インターバル撮影 (最大画質)",
                 color = Color.White,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 画質: ${selectedResolution.shortLabel} ↔ | 撮影数: ${shotCount}コマ",
+                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 撮影数: ${shotCount}コマ",
                 color = Color.LightGray,
                 fontSize = 12.sp
             )
@@ -1086,11 +933,11 @@ private fun SaveTabContent(
 ) {
     val intervalFiles = remember { StorageHelper.getIntervalImageFiles(context) }
     var isGenerating by remember { mutableStateOf(false) }
-    var progress by remember { mutableFloatStateOf(0f) }
+    var progress by remember { mutableStateOf(0f) }
     var lastExportedFile by remember { mutableStateOf<File?>(null) }
     var exportStatusMessage by remember {
         mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n保存する形式を選択してください。(ダークフレーム自動減算適用)"
+            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ (最大画質)\n保存する形式を選択してください。(ダークフレーム自動減算適用)"
             else "保存可能な撮影済み画像がありません。"
         )
     }
