@@ -146,15 +146,25 @@ object ImageCompositor {
 
             darkBitmap?.recycle()
 
-            // 合成結果 Bitmap の生成
-            val resultBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            resultBitmap.setPixels(compositePixels, 0, width, 0, 0, width, height)
+            // 合成結果 Bitmap の生成 (確実にミュータブルにする)
+            val resultBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+                setPixels(compositePixels, 0, width, 0, 0, width, height)
+            }
 
             // テロップ（ウォーターマーク）の焼き込み
-            val canvas = Canvas(resultBitmap)
+            val mutableBitmap = resultBitmap.copy(Bitmap.Config.ARGB_8888, true)
+            resultBitmap.recycle()
+
+            val canvas = Canvas(mutableBitmap)
+            val bmpWidth = mutableBitmap.width
+            val bmpHeight = mutableBitmap.height
+
+            val textSize = (bmpHeight.toFloat() / 45f).coerceAtLeast(36f)
+            val padding = bmpWidth * 0.025f
+
             val paint = Paint().apply {
                 color = Color.WHITE
-                textSize = (height.toFloat() / 50f).coerceAtLeast(36f)
+                this.textSize = textSize
                 isAntiAlias = true
                 typeface = Typeface.DEFAULT_BOLD
                 setShadowLayer(6f, 2f, 2f, Color.BLACK)
@@ -165,21 +175,21 @@ object ImageCompositor {
             val leftText = "最高画質 - 開始: $startDateTime / 終了: $endDateTime"
             val rightText = "AStargazer"
 
-            val padding = 48f
-
             // 左下：最高画質 - 開始日時 / 終了日時
-            canvas.drawText(leftText, padding, height - padding, paint)
+            val leftY = bmpHeight - padding
+            canvas.drawText(leftText, padding, leftY, paint)
 
             // 右下：アプリ名
             val rightTextWidth = paint.measureText(rightText)
-            canvas.drawText(rightText, width - rightTextWidth - padding, height - padding, paint)
+            val rightX = (bmpWidth - rightTextWidth - padding).coerceAtLeast(padding)
+            canvas.drawText(rightText, rightX, leftY, paint)
 
             FileOutputStream(outputFile).use { out ->
-                resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                mutableBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
 
-            resultBitmap.recycle()
-            Log.d("ImageCompositor", "Lighten blend composite with updated watermarks created at ${outputFile.absolutePath}")
+            mutableBitmap.recycle()
+            Log.d("ImageCompositor", "Lighten blend composite with watermarks created at ${outputFile.absolutePath}")
             return true
         } catch (e: Exception) {
             Log.e("ImageCompositor", "Failed to create lighten blend composite", e)
