@@ -108,12 +108,12 @@ fun formatExposureSeconds(seconds: Double): String {
 }
 
 /**
- * メニュータブ
+ * メニュータブ（「保存」を「仕上げ」に変更）
  */
 enum class MainMenuTab(val label: String) {
     SETUP("撮影前設定"),
     INTERVAL("インターバル撮影"),
-    SAVE("保存")
+    SAVE("仕上げ")
 }
 
 /**
@@ -455,6 +455,7 @@ private fun MainAppContent() {
         val currentLocation = LocationHelper.getLastKnownLocation(context)
 
         coroutineScope.launch {
+            // ★ 試写のシャッター押下直後の1秒待機（手ブレ対策）
             delay(1000L)
 
             imageCapture.takePicture(
@@ -917,7 +918,7 @@ private fun SetupTabContent(
 }
 
 /**
- * インターバル撮影タブコンテンツ（ヘッダーの露出時間と撮影数、残り撮影可能枚数の位置を綺麗に整列）
+ * インターバル撮影タブコンテンツ（タブ名称を「保存」から「仕上げ」に変更）
  */
 @Composable
 private fun IntervalTabContent(
