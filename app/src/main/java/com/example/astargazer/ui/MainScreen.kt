@@ -841,7 +841,7 @@ private fun SetupTabContent(
 }
 
 /**
- * インターバル撮影タブコンテンツ（ヘッダーの露出時間を白色に統一）
+ * インターバル撮影タブコンテンツ（ヘッダーの「残り撮影可能」のフォント色を白に統一）
  */
 @Composable
 private fun IntervalTabContent(
@@ -859,7 +859,7 @@ private fun IntervalTabContent(
         )
         PortraitCropGuidesOverlay()
 
-        // ヘッダー（露出時間の文字色を白に統一）
+        // ヘッダー（残り撮影可能も含め文字色を白に統一）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -880,9 +880,8 @@ private fun IntervalTabContent(
                 )
                 Text(
                     text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)}",
-                    color = Color.White, // ← 白に統一
+                    color = Color.White,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.End
                 )
             }
@@ -900,7 +899,7 @@ private fun IntervalTabContent(
                 )
                 Text(
                     text = "残り撮影可能: 約${remainingShots}枚",
-                    color = Color(0xFF00E676),
+                    color = Color.White, // ← 白に統一
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.End
