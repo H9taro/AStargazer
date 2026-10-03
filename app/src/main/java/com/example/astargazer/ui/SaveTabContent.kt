@@ -36,17 +36,26 @@ import java.io.File
 import kotlin.math.abs
 
 /**
- * 出力画質（解像度）の選択肢
+ * 出力モード（縦スワイプで切り替え）
+ * 1. HD（タイムラプス）
+ * 2. Full HD（タイムラプス）
+ * 3. 2K（タイムラプス）
+ * 4. 4K（タイムラプス）
+ * 5. 最高画質（比較明合成）
  */
-enum class ExportResolution(val label: String) {
-    HD("HD (720p)"),
-    FULLHD("Full HD (1080p)"),
-    QHD_2K("2K"),
-    UHD_4K("4K"),
-    MAX("最高画質 (オリジナル)");
+enum class ExportMode(
+    val label: String,
+    val isTimelapse: Boolean,
+    val resolutionLabel: String
+) {
+    HD_TIMELAPSE("HD（タイムラプス）", true, "HD (720p)"),
+    FULLHD_TIMELAPSE("Full HD（タイムラプス）", true, "Full HD (1080p)"),
+    QHD_2K_TIMELAPSE("2K（タイムラプス）", true, "2K"),
+    UHD_4K_TIMELAPSE("4K（タイムラプス）", true, "4K"),
+    MAX_COMPOSITE("最高画質（比較明合成）", false, "最高画質");
 
-    fun next(excludeMax: Boolean): ExportResolution {
-        val entries = if (excludeMax) listOf(HD, FULLHD, QHD_2K, UHD_4K) else entries
+    fun next(): ExportMode {
+        val entries = entries
         val currentIndex = entries.indexOf(this)
         return if (currentIndex >= 0 && currentIndex < entries.size - 1) {
             entries[currentIndex + 1]
@@ -55,8 +64,8 @@ enum class ExportResolution(val label: String) {
         }
     }
 
-    fun prev(excludeMax: Boolean): ExportResolution {
-        val entries = if (excludeMax) listOf(HD, FULLHD, QHD_2K, UHD_4K) else entries
+    fun prev(): ExportMode {
+        val entries = entries
         val currentIndex = entries.indexOf(this)
         return if (currentIndex > 0) {
             entries[currentIndex - 1]
@@ -66,33 +75,22 @@ enum class ExportResolution(val label: String) {
     }
 }
 
-/**
- * 保存形式の選択肢
- */
-enum class ExportFormat(val label: String) {
-    TIMELAPSE("タイムラプス動画 (*.mp4)"),
-    COMPOSITE("比較明合成静止画 (*.jpg)")
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SaveTabContent(
     context: Context,
     coroutineScope: kotlinx.coroutines.CoroutineScope
 ) {
     val intervalFiles = remember { StorageHelper.getIntervalImageFiles(context) }
-    var selectedFormat by remember { mutableStateOf(ExportFormat.TIMELAPSE) }
-    var selectedResolution by remember { mutableStateOf(ExportResolution.FULLHD) }
-    var isDropdownExpanded by remember { mutableStateOf(false) }
+    var selectedMode by remember { mutableStateOf(ExportMode.FULLHD_TIMELAPSE) }
 
     // プレビュー表示する画像コマのインデックス
     var currentImageIndex by remember { mutableIntStateOf(0) }
 
     var isGenerating by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
+    var progress by remember { mutableFloatStateOf(0f) }
     var statusMessage by remember {
         mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n横スワイプ: コマ切替 | 縦スワイプ: 画質切替"
+            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ\n横スワイプ: コマ切替 | 縦スワイプ: 出力モード切替"
             else "保存可能な撮影済み画像がありません。"
         )
     }
@@ -123,15 +121,14 @@ fun SaveTabContent(
         if (intervalFiles.isEmpty()) return
         isGenerating = true
         progress = 0f
-        val formatName = if (selectedFormat == ExportFormat.TIMELAPSE) "タイムラプス動画" else "比較明合成静止画"
-        statusMessage = "$formatName (${selectedResolution.label}) を生成中..."
+        statusMessage = "${selectedMode.label} を生成中..."
 
         coroutineScope.launch(Dispatchers.IO) {
             val darkFrameFile = StorageHelper.getDarkFrameFile(context)
             val success: Boolean
             val outputFile: File
 
-            if (selectedFormat == ExportFormat.TIMELAPSE) {
+            if (selectedMode.isTimelapse) {
                 outputFile = StorageHelper.getTimelapseVideoFile(context)
                 success = VideoEncoderHelper.createTimelapseVideo(
                     imageFiles = intervalFiles,
@@ -154,10 +151,10 @@ fun SaveTabContent(
                 isGenerating = false
                 if (success) {
                     FileViewerHelper.scanFile(context, outputFile)
-                    statusMessage = "$formatName の生成が完了しました！\n保存先: ${outputFile.name}"
+                    statusMessage = "${selectedMode.label} の生成が完了しました！\n保存先: ${outputFile.name}"
                     FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
                 } else {
-                    statusMessage = "$formatName の生成に失敗しました。"
+                    statusMessage = "${selectedMode.label} の生成に失敗しました。"
                 }
             }
         }
@@ -186,18 +183,17 @@ fun SaveTabContent(
                     }
                 )
             }
-            .pointerInput(selectedFormat) {
+            .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragStart = { totalDragY = 0f },
                     onDragEnd = {
                         if (abs(totalDragY) > 60f && !isGenerating) {
-                            val excludeMax = (selectedFormat == ExportFormat.TIMELAPSE)
                             if (totalDragY > 0f) {
-                                // 下スワイプ: 前の画質
-                                selectedResolution = selectedResolution.prev(excludeMax)
+                                // 下スワイプ: 前のモード
+                                selectedMode = selectedMode.prev()
                             } else {
-                                // 上スワイプ: 次の画質
-                                selectedResolution = selectedResolution.next(excludeMax)
+                                // 上スワイプ: 次のモード
+                                selectedMode = selectedMode.next()
                             }
                         }
                     },
@@ -224,71 +220,27 @@ fun SaveTabContent(
                 modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
             )
 
-            // 1. 保存形式選択プルダウン ＆ 画質表示（縦スワイプ案内）
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // 出力モード表示カード（縦スワイプ切替）
+            Surface(
+                color = Color(0xFF1E88E5).copy(alpha = 0.3f),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
             ) {
-                ExposedDropdownMenuBox(
-                    expanded = isDropdownExpanded,
-                    onExpandedChange = { isDropdownExpanded = !isDropdownExpanded },
-                    modifier = Modifier.weight(1f)
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    OutlinedTextField(
-                        value = selectedFormat.label,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("保存形式", color = Color.LightGray, fontSize = 10.sp) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(0xFF1E88E5),
-                            unfocusedBorderColor = Color.Gray,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent
-                        ),
-                        modifier = Modifier
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                            .fillMaxWidth()
+                    Text(text = "出力モード (↕ 縦スワイプで切替)", color = Color.LightGray, fontSize = 10.sp)
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = selectedMode.label,
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
                     )
-
-                    ExposedDropdownMenu(
-                        expanded = isDropdownExpanded,
-                        onDismissRequest = { isDropdownExpanded = false }
-                    ) {
-                        ExportFormat.entries.forEach { format ->
-                            DropdownMenuItem(
-                                text = { Text(format.label, color = Color.White) },
-                                onClick = {
-                                    selectedFormat = format
-                                    isDropdownExpanded = false
-                                    if (format == ExportFormat.TIMELAPSE && selectedResolution == ExportResolution.MAX) {
-                                        selectedResolution = ExportResolution.FULLHD
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // 画質表示バッジ（縦スワイプ切替）
-                Surface(
-                    color = Color(0xFF1E88E5).copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(56.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(text = "画質 (↕縦スワイプ)", color = Color.LightGray, fontSize = 9.sp)
-                        Text(text = selectedResolution.label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    }
                 }
             }
 
@@ -309,8 +261,8 @@ fun SaveTabContent(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit
                     )
-                    // 画質に応じたクロップ枠のオーバーレイ
-                    SaveCropGuideOverlay(selectedResolution = selectedResolution)
+                    // 画質に応じたクロップ枠のオーバーレイ（最高画質時は非表示）
+                    SaveCropGuideOverlay(resolutionLabel = selectedMode.resolutionLabel)
 
                     // コマ番号表示バッジ
                     if (intervalFiles.isNotEmpty()) {
@@ -322,7 +274,7 @@ fun SaveTabContent(
                                 .padding(12.dp)
                         ) {
                             Text(
-                                text = "📷 ${currentImageIndex + 1} / ${intervalFiles.size}コマ (↔横スワイプで切替)",
+                                text = "📷 ${currentImageIndex + 1} / ${intervalFiles.size}コマ (↔ 横スワイプで切替)",
                                 color = Color.White,
                                 fontSize = 11.sp,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -382,7 +334,7 @@ fun SaveTabContent(
                 onClick = { executeExport() },
                 enabled = !isGenerating && intervalFiles.isNotEmpty(),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF1E88E5),
+                    containerColor = if (selectedMode.isTimelapse) Color(0xFF1E88E5) else Color(0xFF43A047),
                     disabledContainerColor = Color.DarkGray
                 ),
                 modifier = Modifier
@@ -391,7 +343,7 @@ fun SaveTabContent(
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Text(
-                    text = if (selectedFormat == ExportFormat.TIMELAPSE) "🎬 タイムラプス動画を出力" else "🌌 比較明合成静止画を出力",
+                    text = if (selectedMode.isTimelapse) "🎬 ${selectedMode.label} を出力" else "🌌 ${selectedMode.label} を出力",
                     color = Color.White,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
@@ -406,9 +358,9 @@ fun SaveTabContent(
  */
 @Composable
 private fun SaveCropGuideOverlay(
-    selectedResolution: ExportResolution
+    resolutionLabel: String
 ) {
-    if (selectedResolution == ExportResolution.MAX) return
+    if (resolutionLabel == "最高画質") return
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val width = constraints.maxWidth.toFloat()
@@ -416,20 +368,20 @@ private fun SaveCropGuideOverlay(
 
         if (width <= 0f || height <= 0f) return@BoxWithConstraints
 
-        val scale = when (selectedResolution) {
-            ExportResolution.HD -> 0.60f
-            ExportResolution.FULLHD -> 0.75f
-            ExportResolution.QHD_2K -> 0.82f
-            ExportResolution.UHD_4K -> 0.90f
-            ExportResolution.MAX -> 1.0f
+        val scale = when (resolutionLabel) {
+            "HD (720p)" -> 0.60f
+            "Full HD (1080p)" -> 0.75f
+            "2K" -> 0.82f
+            "4K" -> 0.90f
+            else -> 1.0f
         }
 
-        val borderColor = when (selectedResolution) {
-            ExportResolution.HD -> Color(0xFFFF5252)
-            ExportResolution.FULLHD -> Color(0xFFFFEB3B)
-            ExportResolution.QHD_2K -> Color(0xFF00E676)
-            ExportResolution.UHD_4K -> Color(0xFF00B0FF)
-            ExportResolution.MAX -> Color.Transparent
+        val borderColor = when (resolutionLabel) {
+            "HD (720p)" -> Color(0xFFFF5252)
+            "Full HD (1080p)" -> Color(0xFFFFEB3B)
+            "2K" -> Color(0xFF00E676)
+            "4K" -> Color(0xFF00B0FF)
+            else -> Color.Transparent
         }
 
         Canvas(modifier = Modifier.fillMaxSize()) {
