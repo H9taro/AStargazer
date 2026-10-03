@@ -18,7 +18,7 @@ import java.io.File
 object VideoEncoderHelper {
 
     /**
-     * 静止画ファイル群から選択された解像度（HD, Full HD, 4K）のクロップを適用して MP4 タイムラプス動画を生成する
+     * 静止画ファイル群から選択された解像度（HD, Full HD, 4K）の9:16クロップを適用して MP4 タイムラプス動画を生成する
      * テレビ等の視聴用に、縦位置画像を時計回りに90度回転させて横長（ランドスケープ）動画として出力する
      * 右下に各コマの撮影日時（秒まで）、左下にアプリ名 "AStargazer" のテロップを焼き込む
      */
@@ -112,15 +112,21 @@ object VideoEncoderHelper {
                 val subtractedBitmap = ImageCompositor.subtractDarkFrame(rawBitmap, darkBitmap)
                 if (rawBitmap != subtractedBitmap) rawBitmap.recycle()
 
-                // 1. クロップ処理（プレビューの枠線に合わせて中央部分を切り出し）
+                // 1. プレビューの SaveCropGuideOverlay と完全に一致する 9:16 クロップ計算
                 val srcWidth = subtractedBitmap.width
                 val srcHeight = subtractedBitmap.height
-                val cropWidth = (srcWidth * cropScale).toInt()
                 val cropHeight = (srcHeight * cropScale).toInt()
+                val cropWidth = (cropHeight * 9) / 16
                 val cropLeft = (srcWidth - cropWidth) / 2
                 val cropTop = (srcHeight - cropHeight) / 2
 
-                val croppedBitmap = Bitmap.createBitmap(subtractedBitmap, cropLeft, cropTop, cropWidth, cropHeight)
+                val croppedBitmap = Bitmap.createBitmap(
+                    subtractedBitmap,
+                    cropLeft.coerceAtLeast(0),
+                    cropTop.coerceAtLeast(0),
+                    cropWidth.coerceAtMost(srcWidth),
+                    cropHeight.coerceAtMost(srcHeight)
+                )
                 if (subtractedBitmap != croppedBitmap) subtractedBitmap.recycle()
 
                 // 2. クロップ済み画像を時計回りに90度回転させて横長画像に変換
