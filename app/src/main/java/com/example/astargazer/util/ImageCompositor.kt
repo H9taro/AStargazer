@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Typeface
 import android.util.Log
 import java.io.File
@@ -65,6 +67,7 @@ object ImageCompositor {
 
     /**
      * 複数枚の静止画ファイル群から比較明合成 (Lighten Blend) 画像を生成する
+     * Android の Canvas および PorterDuff.Mode.LIGHTEN を用いてメモリ効率良く高速に合成する
      * ダークフレーム画像が存在する場合は自動的にダーク減算処理を実行する
      * 左下に「最高画質 - 開始: [日時] / 終了: [日時]」、右下にアプリ名 "AStargazer" のテロップを焼き込む
      *
@@ -93,73 +96,57 @@ object ImageCompositor {
                 null
             }
 
+            // 1枚目の画像をロード＆ダーク減算
             val firstRaw = BitmapFactory.decodeFile(imageFiles[0].absolutePath) ?: return false
-            val firstBitmap = subtractDarkFrame(firstRaw, darkBitmap)
-            if (firstRaw != firstBitmap) firstRaw.recycle()
+            val firstSubtracted = subtractDarkFrame(firstRaw, darkBitmap)
+            if (firstRaw != firstSubtracted) firstRaw.recycle()
 
-            val width = firstBitmap.width
-            val height = firstBitmap.height
+            val width = firstSubtracted.width
+            val height = firstSubtracted.height
 
-            val compositePixels = IntArray(width * height)
-            firstBitmap.getPixels(compositePixels, 0, width, 0, 0, width, height)
-            firstBitmap.recycle()
+            // 合成結果を保持するミュータブルな Bitmap
+            val resultBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(resultBitmap)
+            canvas.drawBitmap(firstSubtracted, 0f, 0f, null)
+            firstSubtracted.recycle()
 
-            val currentPixels = IntArray(width * height)
+            // 比較明合成用の Paint (PorterDuff.Mode.LIGHTEN)
+            val lightenPaint = Paint().apply {
+                xfermode = PorterDuffXfermode(PorterDuff.Mode.LIGHTEN)
+            }
 
             for (index in 1 until imageFiles.size) {
                 val file = imageFiles[index]
                 val rawBitmap = BitmapFactory.decodeFile(file.absolutePath) ?: continue
-                val frameBitmap = subtractDarkFrame(rawBitmap, darkBitmap)
-                if (rawBitmap != frameBitmap) rawBitmap.recycle()
+                val frameSubtracted = subtractDarkFrame(rawBitmap, darkBitmap)
+                if (rawBitmap != frameSubtracted) rawBitmap.recycle()
 
-                if (frameBitmap.width != width || frameBitmap.height != height) {
-                    val scaled = Bitmap.createScaledBitmap(frameBitmap, width, height, true)
-                    scaled.getPixels(currentPixels, 0, width, 0, 0, width, height)
-                    scaled.recycle()
+                // サイズが異なる場合はスケール調整
+                val scaledFrame = if (frameSubtracted.width != width || frameSubtracted.height != height) {
+                    val scaled = Bitmap.createScaledBitmap(frameSubtracted, width, height, true)
+                    if (scaled != frameSubtracted) frameSubtracted.recycle()
+                    scaled
                 } else {
-                    frameBitmap.getPixels(currentPixels, 0, width, 0, 0, width, height)
+                    frameSubtracted
                 }
-                frameBitmap.recycle()
 
-                // 比較明合成 (Lighten Blend)
-                for (i in compositePixels.indices) {
-                    val compP = compositePixels[i]
-                    val currP = currentPixels[i]
-
-                    val compR = (compP shr 16) and 0xFF
-                    val compG = (compP shr 8) and 0xFF
-                    val compB = compP and 0xFF
-
-                    val currR = (currP shr 16) and 0xFF
-                    val currG = (currP shr 8) and 0xFF
-                    val currB = currP and 0xFF
-
-                    val maxR = if (currR > compR) currR else compR
-                    val maxG = if (currG > compG) currG else compG
-                    val maxB = if (currB > compB) currB else compB
-
-                    compositePixels[i] = Color.rgb(maxR, maxG, maxB)
-                }
+                // 2枚目以降を Lighten モードで重ね合わせ
+                canvas.drawBitmap(scaledFrame, 0f, 0f, lightenPaint)
+                scaledFrame.recycle()
 
                 onProgress((index + 1).toFloat() / imageFiles.size)
             }
 
             darkBitmap?.recycle()
 
-            // 合成結果 Bitmap の生成（デフォルトでミュータブル）
-            val resultBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
-                setPixels(compositePixels, 0, width, 0, 0, width, height)
-            }
-
-            // テロップ（ウォーターマーク）の焼き込み（コピーを作らず直接 resultBitmap の Canvas を使用）
-            val canvas = Canvas(resultBitmap)
+            // テロップ（ウォーターマーク）の焼き込み
             val bmpWidth = resultBitmap.width
             val bmpHeight = resultBitmap.height
 
             val textSize = (bmpHeight.toFloat() / 45f).coerceAtLeast(36f)
             val padding = bmpWidth * 0.025f
 
-            val paint = Paint().apply {
+            val textPaint = Paint().apply {
                 color = Color.WHITE
                 this.textSize = textSize
                 isAntiAlias = true
@@ -174,19 +161,19 @@ object ImageCompositor {
 
             // 左下：最高画質 - 開始日時 / 終了日時
             val leftY = bmpHeight - padding
-            canvas.drawText(leftText, padding, leftY, paint)
+            canvas.drawText(leftText, padding, leftY, textPaint)
 
             // 右下：アプリ名
-            val rightTextWidth = paint.measureText(rightText)
+            val rightTextWidth = textPaint.measureText(rightText)
             val rightX = (bmpWidth - rightTextWidth - padding).coerceAtLeast(padding)
-            canvas.drawText(rightText, rightX, leftY, paint)
+            canvas.drawText(rightText, rightX, leftY, textPaint)
 
             FileOutputStream(outputFile).use { out ->
                 resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
 
             resultBitmap.recycle()
-            Log.d("ImageCompositor", "Lighten blend composite with watermarks created successfully at ${outputFile.absolutePath}")
+            Log.d("ImageCompositor", "Lighten blend composite (Canvas PorterDuff) created successfully at ${outputFile.absolutePath}")
             return true
         } catch (e: Exception) {
             Log.e("ImageCompositor", "Failed to create lighten blend composite", e)
