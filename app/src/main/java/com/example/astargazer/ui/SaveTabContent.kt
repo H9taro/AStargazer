@@ -1,7 +1,9 @@
 package com.example.astargazer.ui
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -93,16 +95,40 @@ fun SaveTabContent(
         )
     }
 
+    // プレビュー用の安全なサンプリングデコード関数（OOM防止）
+    fun decodeSampledBitmapForPreview(file: File, reqWidth: Int = 1080, reqHeight: Int = 1920): Bitmap? {
+        return try {
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeFile(file.absolutePath, options)
+
+            val (height: Int, width: Int) = options.run { outHeight to outWidth }
+            var inSampleSize = 1
+            if (height > reqHeight || width > reqWidth) {
+                val halfHeight: Int = height / 2
+                val halfWidth: Int = width / 2
+                while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                    inSampleSize *= 2
+                }
+            }
+
+            options.inSampleSize = inSampleSize
+            options.inJustDecodeBounds = false
+
+            BitmapFactory.decodeFile(file.absolutePath, options)
+        } catch (e: Exception) {
+            Log.e("SaveTabContent", "Failed to decode preview bitmap", e)
+            null
+        }
+    }
+
     // 現在のインデックスのBitmapをロード
     val currentBitmap = remember(intervalFiles, currentImageIndex) {
         if (intervalFiles.isNotEmpty() && currentImageIndex in intervalFiles.indices) {
             val file = intervalFiles[currentImageIndex]
             if (file.exists()) {
-                try {
-                    BitmapFactory.decodeFile(file.absolutePath)
-                } catch (e: Exception) {
-                    null
-                }
+                decodeSampledBitmapForPreview(file)
             } else {
                 null
             }
@@ -212,7 +238,7 @@ fun SaveTabContent(
         ) {
             // ヘッダー情報
             Text(
-                text = "保存",
+                text = "仕上げ",
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -328,7 +354,7 @@ fun SaveTabContent(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 3. 保存ボタン
+            // 3. 仕上げボタン
             Button(
                 onClick = { executeExport() },
                 enabled = !isGenerating && intervalFiles.isNotEmpty(),
@@ -371,7 +397,10 @@ private fun SaveCropGuideOverlay(
             "HD (720p)" -> 0.60f
             "Full HD (1080p)" -> 0.75f
             "4K" -> 0.90f
-            else -> 1.0f
+            else -> {
+                Log.w("SaveCropGuideOverlay", "Unknown resolutionLabel: '$resolutionLabel', defaulting scale to 0.75f (Full HD)")
+                0.75f
+            }
         }
 
         val borderColor = when (resolutionLabel) {
