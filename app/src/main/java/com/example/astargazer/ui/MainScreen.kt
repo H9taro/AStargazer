@@ -214,6 +214,7 @@ private fun MainAppContent() {
 
     var isIntervalShootingActive by remember { mutableStateOf(false) }
     var shotCount by remember { mutableIntStateOf(0) }
+    var remainingShots by remember { mutableIntStateOf(0) }
 
     var currentStep by remember { mutableStateOf(WorkflowStep.DARK_FRAME_NOTICE) }
 
@@ -233,7 +234,7 @@ private fun MainAppContent() {
         }
     }
 
-    // 設定キャンセル・リセット（いつでも露出時間を再選択可能にするため DARK_FRAME_NOTICE に戻す）
+    // 設定キャンセル・リセット
     fun cancelSetup() {
         isProcessing = false
         isSetupCompleted = false
@@ -302,15 +303,15 @@ private fun MainAppContent() {
 
         isIntervalShootingActive = true
         shotCount = 0
+        remainingShots = currentRemainingShots
 
         coroutineScope.launch {
-            statusMessage = "インターバル撮影を開始しました。(最大画質)"
-
             while (isIntervalShootingActive) {
                 shotCount++
-                if (currentRemainingShots > 0) currentRemainingShots--
-
-                statusMessage = "インターバル撮影中... [撮影数: ${shotCount}枚 / 残り撮影可能: 約${currentRemainingShots}枚]"
+                if (currentRemainingShots > 0) {
+                    currentRemainingShots--
+                    remainingShots = currentRemainingShots
+                }
 
                 val success = captureIntervalFrame(imageCapture, shotCount, optimalIso)
                 if (success) {
@@ -331,7 +332,6 @@ private fun MainAppContent() {
                 MainMenuTab.SETUP -> {
                     when (currentStep) {
                         WorkflowStep.DARK_FRAME_NOTICE -> {
-                            // もし有効なダークフレームが存在する場合は、撮影ステップをスキップして北極星合わせへ
                             if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
                                 currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
                                 statusMessage = "既存のダークフレームを流用します。北極星を合わせてシャッターを押してください。"
@@ -350,7 +350,6 @@ private fun MainAppContent() {
                     if (isIntervalShootingActive) {
                         isIntervalShootingActive = false
                         if (shotCount > 0) isIntervalCompleted = true
-                        statusMessage = "インターバル撮影を停止しました。(合計: ${shotCount}枚)"
                     } else {
                         startIntervalShootingLoop()
                     }
@@ -585,8 +584,8 @@ private fun MainAppContent() {
                     IntervalTabContent(
                         isIntervalActive = isIntervalShootingActive,
                         shotCount = shotCount,
+                        remainingShots = remainingShots,
                         selectedExposureSeconds = selectedExposureSeconds,
-                        statusMessage = statusMessage,
                         onTriggerShutter = onTriggerShutter,
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
@@ -708,7 +707,6 @@ private fun SetupTabContent(
                     fontWeight = FontWeight.Bold
                 )
 
-                // 撮影前設定ステップ中はいつでも露出時間の選択を変更可能にする
                 val isChangeable = currentStep == WorkflowStep.DARK_FRAME_NOTICE || currentStep == WorkflowStep.POLARIS_ALIGNMENT_NOTICE
 
                 ExposedDropdownMenuBox(
@@ -780,27 +778,7 @@ private fun SetupTabContent(
             }
         }
 
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 120.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Text(
-                text = statusMessage,
-                color = Color.White,
-                fontSize = 15.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-            )
-        }
-
-        // シャッターボタン（処理中・撮影中は常に停止マーク）
+        // シャッターボタン
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -843,14 +821,14 @@ private fun SetupTabContent(
 }
 
 /**
- * インターバル撮影タブコンテンツ
+ * インターバル撮影タブコンテンツ（撮影数・残り撮影可能枚数をヘッダーに統合し、プレビューのオーバーレイ文言を廃止）
  */
 @Composable
 private fun IntervalTabContent(
     isIntervalActive: Boolean,
     shotCount: Int,
+    remainingShots: Int,
     selectedExposureSeconds: Double,
-    statusMessage: String,
     onTriggerShutter: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
@@ -861,47 +839,41 @@ private fun IntervalTabContent(
         )
         PortraitCropGuidesOverlay()
 
+        // ヘッダーに撮影数と残り撮影可能枚数を集約（プレビューのオーバーレイ文言を廃止）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
                 .background(Color.Black.copy(alpha = 0.65f))
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "インターバル撮影",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "撮影数: ${shotCount}コマ | 残り撮影可能: 約${remainingShots}枚",
+                    color = Color(0xFF00E676),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "インターバル撮影",
-                color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)} | 撮影数: ${shotCount}コマ",
+                text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)}",
                 color = Color.LightGray,
-                fontSize = 12.sp
+                fontSize = 11.sp
             )
         }
 
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 120.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Text(
-                text = statusMessage,
-                color = Color.White,
-                fontSize = 15.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-            )
-        }
-
+        // シャッターボタン（停止マーク対応）
         Box(
             modifier = Modifier
                 .fillMaxWidth()
