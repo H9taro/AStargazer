@@ -285,8 +285,11 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // インターバル1コマ撮影（高速化：GPSは開始時1回、MediaScannerは撮影中呼ばない）
+    // インターバル1コマ撮影（詳細パフォーマンス診断ログ付き）
     suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int, baseLocation: android.location.Location?): Boolean {
+        val frameStartTime = System.currentTimeMillis()
+        Log.i("IntervalPerf", "=== [Frame $index] Requesting capture at $frameStartTime (Exposure: ${selectedExposureSeconds}s) ===")
+
         return suspendCancellableCoroutine { continuation ->
             coroutineScope.launch {
                 if (index == 1) {
@@ -297,15 +300,21 @@ private fun MainAppContent() {
                 val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
                 val executor = ContextCompat.getMainExecutor(context)
 
+                val takePicStartTime = System.currentTimeMillis()
+                Log.i("IntervalPerf", "[Frame $index] takePicture() invoked at $takePicStartTime (Delay from start: ${takePicStartTime - frameStartTime}ms)")
+
                 imageCapture.takePicture(
                     outputOptions,
                     executor,
                     object : ImageCapture.OnImageSavedCallback {
                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                            val onSavedTime = System.currentTimeMillis()
+                            Log.i("IntervalPerf", "[Frame $index] onImageSaved() callback received at $onSavedTime (Camera/Storage duration: ${onSavedTime - takePicStartTime}ms)")
+
                             if (continuation.isActive) continuation.resume(true)
 
-                            // バックグラウンドでExif書き込みのみ高速実行（MediaScannerは連写中除外）
                             coroutineScope.launch(Dispatchers.IO) {
+                                val exifStartTime = System.currentTimeMillis()
                                 try {
                                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                                         file = outputFile,
@@ -313,14 +322,17 @@ private fun MainAppContent() {
                                         exposureSeconds = selectedExposureSeconds,
                                         location = baseLocation
                                     )
+                                    val exifEndTime = System.currentTimeMillis()
+                                    Log.i("IntervalPerf", "[Frame $index] Exif write completed in ${exifEndTime - exifStartTime}ms (Total Frame Time: ${exifEndTime - frameStartTime}ms)")
                                 } catch (e: Exception) {
-                                    Log.e("MainScreen", "Background Exif write failed for $index", e)
+                                    Log.e("IntervalPerf", "[Frame $index] Exif write failed", e)
                                 }
                             }
                         }
 
                         override fun onError(exception: ImageCaptureException) {
-                            Log.e("MainScreen", "Interval frame $index capture error", exception)
+                            val onErrorTime = System.currentTimeMillis()
+                            Log.e("IntervalPerf", "[Frame $index] takePicture ERROR at $onErrorTime: ${exception.message}", exception)
                             if (continuation.isActive) continuation.resume(false)
                         }
                     }
@@ -342,13 +354,15 @@ private fun MainAppContent() {
 
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
         
-        // インターバル開始時にGPS位置情報を1回だけ取得（毎コマの遅延を完全排除）
+        // インターバル開始時にGPS位置情報を1回だけ取得
         val baseLocation = LocationHelper.getLastKnownLocation(context)
 
         isIntervalShootingActive = true
         shotCount = 0
         elapsedSeconds = 0
         remainingShots = currentRemainingShots
+
+        Log.i("IntervalPerf", ">>> START INTERVAL SHOOTING LOOP (Exposure: ${selectedExposureSeconds}s, ISO: $optimalIso) <<<")
 
         coroutineScope.launch {
             while (isIntervalShootingActive) {
@@ -362,9 +376,10 @@ private fun MainAppContent() {
                 if (success) {
                     isIntervalCompleted = true
                 } else {
-                    Log.w("MainScreen", "Failed to capture frame $shotCount")
+                    Log.w("IntervalPerf", "Failed to capture frame $shotCount")
                 }
             }
+            Log.i("IntervalPerf", ">>> STOP INTERVAL SHOOTING LOOP (Total captured: $shotCount frames) <<<")
         }
     }
 
