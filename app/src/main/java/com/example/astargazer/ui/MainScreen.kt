@@ -227,31 +227,28 @@ private fun MainAppContent() {
         mutableStateOf("露出時間を選択し、レンズを覆ってシャッターを押してください（ダーク撮影）。")
     }
 
-    // 露出時間が変更されたときに、同じ秒数のダークフレームが存在するかチェックして自動スキップ
+    // 露出時間が変更されたとき、すでに同じ秒数のダークフレームがあれば案内メッセージに反映
     LaunchedEffect(selectedExposureSeconds) {
         if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
-            currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
-            statusMessage = "一致する露出時間(${formatExposureSeconds(selectedExposureSeconds)})のダークフレームが存在するため、ダーク撮影をスキップします。北極星を合わせてシャッターを押してください。"
+            statusMessage = "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: 既存のダークフレームが利用可能です。そのままシャッターを押して北極星合わせへ進むか、露出時間を再選択できます。"
         } else {
-            currentStep = WorkflowStep.DARK_FRAME_NOTICE
             statusMessage = "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: レンズを覆ってシャッターを押してください（ダーク撮影）。"
         }
     }
 
-    // 設定キャンセル・リセット
+    // 設定キャンセル・リセット（いつでも露出時間を再選択可能にするため DARK_FRAME_NOTICE に戻す）
     fun cancelSetup() {
         isProcessing = false
         isSetupCompleted = false
         isIntervalCompleted = false
         isIntervalShootingActive = false
+        currentStep = WorkflowStep.DARK_FRAME_NOTICE
         capturedTestBitmap = null
 
-        if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
-            currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
-            statusMessage = "設定をリセットしました。既存のダークフレームを流用します。北極星を合わせてシャッターを押してください。"
+        statusMessage = if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+            "設定をリセットしました。露出時間を再選択するか、シャッターを押して進んでください（既存ダーク流用可）。"
         } else {
-            currentStep = WorkflowStep.DARK_FRAME_NOTICE
-            statusMessage = "設定をリセットしました。レンズを覆ってシャッターを押してください。"
+            "設定をリセットしました。露出時間を再選択し、レンズを覆ってシャッターを押してください。"
         }
         selectedTab = MainMenuTab.SETUP
     }
@@ -336,7 +333,15 @@ private fun MainAppContent() {
             when (selectedTab) {
                 MainMenuTab.SETUP -> {
                     when (currentStep) {
-                        WorkflowStep.DARK_FRAME_NOTICE -> currentStep = WorkflowStep.DARK_FRAME_SHOOTING
+                        WorkflowStep.DARK_FRAME_NOTICE -> {
+                            // もし有効なダークフレームが存在する場合は、撮影ステップをスキップして北極星合わせへ
+                            if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+                                currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                                statusMessage = "既存のダークフレームを流用します。北極星を合わせてシャッターを押してください。"
+                            } else {
+                                currentStep = WorkflowStep.DARK_FRAME_SHOOTING
+                            }
+                        }
                         WorkflowStep.DARK_FRAME_SHOOTING -> {}
                         WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
                         WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
@@ -516,9 +521,7 @@ private fun MainAppContent() {
                         onClick = {
                             selectedTab = tab
                             if (tab == MainMenuTab.SETUP) {
-                                if (!StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
-                                    currentStep = WorkflowStep.DARK_FRAME_NOTICE
-                                }
+                                cancelSetup()
                             }
                         },
                         label = {
@@ -708,7 +711,8 @@ private fun SetupTabContent(
                     fontWeight = FontWeight.Bold
                 )
 
-                val isChangeable = currentStep == WorkflowStep.DARK_FRAME_NOTICE
+                // 撮影前設定ステップ中はいつでも露出時間の選択を変更可能にする
+                val isChangeable = currentStep == WorkflowStep.DARK_FRAME_NOTICE || currentStep == WorkflowStep.POLARIS_ALIGNMENT_NOTICE
 
                 ExposedDropdownMenuBox(
                     expanded = isDropdownExpanded && isChangeable,
@@ -738,7 +742,7 @@ private fun SetupTabContent(
                         ),
                         modifier = Modifier
                             .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                            .width(95.dp)
+                            .width(135.dp) // プルダウンの幅を拡大して1行で表示
                     )
 
                     ExposedDropdownMenu(
