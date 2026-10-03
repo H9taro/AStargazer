@@ -2,7 +2,10 @@ package com.example.astargazer.util
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
@@ -18,7 +21,6 @@ object ImageCompositor {
         val width = src.width
         val height = src.height
 
-        // サイズが異なる場合はスケールを合わせる
         val scaledDark = if (dark.width != width || dark.height != height) {
             Bitmap.createScaledBitmap(dark, width, height, true)
         } else {
@@ -64,6 +66,7 @@ object ImageCompositor {
     /**
      * 複数枚の静止画ファイル群から比較明合成 (Lighten Blend) 画像を生成する
      * ダークフレーム画像が存在する場合は自動的にダーク減算処理を実行する
+     * 右下に「撮影日時の開始と終了」、左下にアプリ名 "AStargazer" のテロップを焼き込む
      *
      * @param imageFiles ソース画像ファイルリスト
      * @param outputFile 出力先 JPEG ファイル
@@ -118,7 +121,7 @@ object ImageCompositor {
                 }
                 frameBitmap.recycle()
 
-                // 比較明合成 (Lighten Blend: 各R, G, B成分の最大値を採用)
+                // 比較明合成 (Lighten Blend)
                 for (i in compositePixels.indices) {
                     val compP = compositePixels[i]
                     val currP = currentPixels[i]
@@ -143,16 +146,46 @@ object ImageCompositor {
 
             darkBitmap?.recycle()
 
-            // 合成結果 Bitmap の生成と JPEG 保存
+            // 合成結果 Bitmap の生成
             val resultBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             resultBitmap.setPixels(compositePixels, 0, width, 0, 0, width, height)
+
+            // テロップ（ウォーターマーク）の焼き込み
+            val canvas = Canvas(resultBitmap)
+            val paint = Paint().apply {
+                color = Color.WHITE
+                textSize = (height.toFloat() / 45f).coerceAtLeast(32f) // 画像サイズに応じたフォントサイズ
+                isAntiAlias = true
+                typeface = Typeface.DEFAULT_BOLD
+                setShadowLayer(6f, 2f, 2f, Color.BLACK)
+            }
+
+            val appNameStr = "AStargazer"
+            val startDateTime = ExifHelper.getDateTime(imageFiles.first())
+            val endDateTime = ExifHelper.getDateTime(imageFiles.last())
+            val startStr = "開始: $startDateTime"
+            val endStr = "終了: $endDateTime"
+
+            val padding = 48f
+            val lineHeight = paint.textSize * 1.3f
+
+            // 左下にアプリ名
+            canvas.drawText(appNameStr, padding, height - padding - lineHeight, paint)
+
+            // 右下に開始・終了撮影日時
+            val startWidth = paint.measureText(startStr)
+            val endWidth = paint.measureText(endStr)
+            val maxRightWidth = maxOf(startWidth, endWidth)
+
+            canvas.drawText(startStr, width - maxRightWidth - padding, height - padding - lineHeight, paint)
+            canvas.drawText(endStr, width - maxRightWidth - padding, height - padding, paint)
 
             FileOutputStream(outputFile).use { out ->
                 resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
 
             resultBitmap.recycle()
-            Log.d("ImageCompositor", "Lighten blend composite created with dark frame subtraction at ${outputFile.absolutePath}")
+            Log.d("ImageCompositor", "Lighten blend composite with watermarks created at ${outputFile.absolutePath}")
             return true
         } catch (e: Exception) {
             Log.e("ImageCompositor", "Failed to create lighten blend composite", e)

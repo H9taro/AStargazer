@@ -10,6 +10,29 @@ import java.util.Locale
 object ExifHelper {
 
     /**
+     * 画像ファイルから Exif の撮影日時文字列 (yyyy-MM-dd HH:mm:ss 形式) を取得する
+     */
+    fun getDateTime(file: File): String {
+        try {
+            val exif = ExifInterface(file.absolutePath)
+            val dt = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)
+                ?: exif.getAttribute(ExifInterface.TAG_DATETIME)
+            if (dt != null) {
+                // "2026:10:03 18:42:00" -> "2026-10-03 18:42:00" に置換
+                val formatted = dt.replace(":", "-")
+                if (formatted.length >= 19) {
+                    return formatted.substring(0, 4) + "-" + formatted.substring(5, 7) + "-" + formatted.substring(8)
+                }
+                return formatted
+            }
+        } catch (e: Exception) {
+            Log.e("ExifHelper", "Failed to read datetime from exif", e)
+        }
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        return sdf.format(Date(file.lastModified()))
+    }
+
+    /**
      * 画像ファイルに撮影パラメータ (Exif メータデータ) および GPS 位置情報を自動書き込み・記録する
      * @param file 保存された画像ファイル (PNG / JPEG)
      * @param iso 撮影に使用された ISO 感度 (例: 1600)
@@ -60,10 +83,9 @@ object ExifHelper {
             // 7. アプリ名
             exif.setAttribute(ExifInterface.TAG_SOFTWARE, "AStargazer 1.0")
 
-            // 8. GPS 位置情報の書き込み (ExifInterface の組み込みメソッド)
+            // 8. GPS 位置情報の書き込み
             if (location != null) {
                 exif.setGpsInfo(location)
-                Log.d("ExifHelper", "Attached GPS to ${file.name}: Lat=${location.latitude}, Lon=${location.longitude}, Alt=${location.altitude}")
             }
 
             exif.saveAttributes()

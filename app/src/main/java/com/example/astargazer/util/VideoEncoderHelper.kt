@@ -5,7 +5,9 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -18,6 +20,7 @@ object VideoEncoderHelper {
     /**
      * 静止画ファイル群から MP4 タイムラプス動画を生成する
      * テレビ等の視聴用に、縦位置画像を左90度回転させて横長（ランドスケープ）動画として出力する
+     * 右下に各コマの撮影日時（秒まで）、左下にアプリ名 "AStargazer" のテロップを焼き込む
      */
     fun createTimelapseVideo(
         imageFiles: List<File>,
@@ -41,13 +44,6 @@ object VideoEncoderHelper {
             } else {
                 null
             }
-
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(imageFiles[0].absolutePath, options)
-            val srcWidth = options.outWidth
-            val srcHeight = options.outHeight
-
-            if (srcWidth <= 0 || srcHeight <= 0) return false
 
             // テレビ等の視聴用に、常に横長（ランドスケープ: 幅1920, 高さ1080 フルHD相当）でエンコード
             val targetWidth = 1920
@@ -74,7 +70,16 @@ object VideoEncoderHelper {
             val frameDurationUs = 1_000_000L / frameRate
 
             val dstRect = Rect(0, 0, targetWidth, targetHeight)
-            val rotateMatrix = Matrix().apply { postRotate(270f) } // 左90度回転 (反時計回り90度 = 時計回り270度)
+            val rotateMatrix = Matrix().apply { postRotate(270f) } // 左90度回転 (反時計回り90度)
+
+            // テロップ用ペイント設定
+            val paint = Paint().apply {
+                color = Color.WHITE
+                textSize = 38f
+                isAntiAlias = true
+                typeface = Typeface.DEFAULT_BOLD
+                setShadowLayer(6f, 2f, 2f, Color.BLACK)
+            }
 
             for ((index, file) in imageFiles.withIndex()) {
                 val rawBitmap = BitmapFactory.decodeFile(file.absolutePath) ?: continue
@@ -91,13 +96,28 @@ object VideoEncoderHelper {
                 )
                 if (subtractedBitmap != rotatedBitmap) subtractedBitmap.recycle()
 
-                // Surface への描画 (横長 1920x1080 にスケーリング)
-                val canvas: Canvas = inputSurface.lockCanvas(null)
-                canvas.drawColor(Color.BLACK)
-                val srcRect = Rect(0, 0, rotatedBitmap.width, rotatedBitmap.height)
-                canvas.drawBitmap(rotatedBitmap, srcRect, dstRect, null)
-                inputSurface.unlockCanvasAndPost(canvas)
+                // 作業用 Mutable Bitmap を作成してテロップ（ウォーターマーク）を焼き込む
+                val frameWithText = rotatedBitmap.copy(Bitmap.Config.ARGB_8888, true)
                 rotatedBitmap.recycle()
+
+                val canvas = Canvas(frameWithText)
+                val dateTimeStr = ExifHelper.getDateTime(file)
+                val appNameStr = "AStargazer"
+
+                // 左下にアプリ名
+                canvas.drawText(appNameStr, 48f, targetHeight - 48f, paint)
+
+                // 右下に各コマの撮影日時
+                val dateTextWidth = paint.measureText(dateTimeStr)
+                canvas.drawText(dateTimeStr, targetWidth - dateTextWidth - 48f, targetHeight - 48f, paint)
+
+                // Surface への描画 (横長 1920x1080)
+                val surfaceCanvas: Canvas = inputSurface.lockCanvas(null)
+                surfaceCanvas.drawColor(Color.BLACK)
+                val srcRect = Rect(0, 0, frameWithText.width, frameWithText.height)
+                surfaceCanvas.drawBitmap(frameWithText, srcRect, dstRect, null)
+                inputSurface.unlockCanvasAndPost(surfaceCanvas)
+                frameWithText.recycle()
 
                 // エンコーダーバッファ読み出し＆Muxer書き込み
                 var draining = true
@@ -164,7 +184,7 @@ object VideoEncoderHelper {
                 muxer.release()
             }
 
-            Log.d("VideoEncoder", "Landscape timelapse video created at ${outputFile.absolutePath} (size: ${outputFile.length()} bytes)")
+            Log.d("VideoEncoder", "Landscape timelapse video created at ${outputFile.absolutePath}")
             return outputFile.exists() && outputFile.length() > 0
         } catch (e: Exception) {
             Log.e("VideoEncoder", "Failed to create timelapse video", e)
