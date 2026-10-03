@@ -10,8 +10,8 @@ import java.util.Locale
 
 object StorageHelper {
 
-    // 1コマ（非圧縮静止画1枚）あたりの推定ファイルサイズ (PNG非圧縮時は約10〜15MB)
-    const val ESTIMATED_BYTES_PER_FRAME = 15 * 1024 * 1024L
+    // 1コマ（最高画質JPEG 1枚）あたりの推定ファイルサイズ (約 4〜6MB)
+    const val ESTIMATED_BYTES_PER_FRAME = 5 * 1024 * 1024L
 
     /**
      * パブリックの Pictures/AStargazer ディレクトリを取得
@@ -62,19 +62,19 @@ object StorageHelper {
     }
 
     /**
-     * 試写調整画像の保存先ファイル (非圧縮 PNG)
+     * 試写調整画像の保存先ファイル (最高画質 JPEG)
      */
     fun getTestShootingFile(): File {
         val dir = getPublicAStargazerDir("TestShooting")
-        return File(dir, "Test_${System.currentTimeMillis()}.png")
+        return File(dir, "Test_${System.currentTimeMillis()}.jpg")
     }
 
     /**
-     * ダークフレーム保存用ファイルの取得 (非圧縮 PNG)
+     * ダークフレーム保存用ファイルの取得 (最高画質 JPEG)
      */
     fun getDarkFrameFile(context: Context? = null): File {
         val dir = getPublicAStargazerDir("DarkFrame")
-        return File(dir, "dark_frame.png")
+        return File(dir, "dark_frame.jpg")
     }
 
     /**
@@ -98,12 +98,12 @@ object StorageHelper {
     }
 
     /**
-     * インターバル撮影写真の保存先ファイルの生成 (非圧縮 PNG)
+     * インターバル撮影写真の保存先ファイルの生成 (最高画質 JPEG)
      */
     fun createIntervalImageFile(context: Context? = null, index: Int): File {
         val dir = getPublicAStargazerDir("Interval")
         val timestamp = System.currentTimeMillis()
-        return File(dir, "IMG_%04d_%d.png".format(Locale.JAPAN, index, timestamp))
+        return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, timestamp))
     }
 
     /**
@@ -125,8 +125,7 @@ object StorageHelper {
     }
 
     /**
-     * 保存済みのインターバル撮影写真ファイルの一覧を取得 (非圧縮 PNG 対象)
-     * (※ ゴミ箱ファイル .trashed- や ドット隠しファイルは除外)
+     * 保存済みのインターバル撮影写真ファイルの一覧を取得 (最高画質 JPEG および 互換用 PNG 対象)
      */
     fun getIntervalImageFiles(context: Context? = null): List<File> {
         val dir = getPublicAStargazerDir("Interval")
@@ -134,11 +133,12 @@ object StorageHelper {
 
         return dir.listFiles { file ->
             val name = file.name
+            val ext = file.extension
             file.isFile &&
                     !file.isHidden &&
                     !name.startsWith(".") &&
                     !name.startsWith(".trashed") &&
-                    file.extension.equals("png", ignoreCase = true)
+                    (ext.equals("jpg", ignoreCase = true) || ext.equals("jpeg", ignoreCase = true) || ext.equals("png", ignoreCase = true))
         }?.sortedBy { it.name } ?: emptyList()
     }
 }
