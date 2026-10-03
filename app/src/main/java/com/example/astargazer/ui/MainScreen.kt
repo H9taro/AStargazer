@@ -606,7 +606,7 @@ private fun MainAppContent() {
 }
 
 /**
- * 縦位置での 4K, Full HD, HD クロップエリア枠線を同時に表示するガイドオーバーレイ
+ * 縦位置での 4K, Full HD, HD クロップエリア枠線を同時に表示するガイドオーバーレイ（「上」「下」の向き表示を追加）
  */
 @Composable
 private fun PortraitCropGuidesOverlay(
@@ -639,6 +639,43 @@ private fun PortraitCropGuidesOverlay(
                         width = 1.5.dp.toPx(),
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
                     )
+                )
+            }
+        }
+
+        // タイムラプス動画変換時の上下方向インジケーター（左90度回転を考慮し右側が上、左側が下）
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.7f),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Text(
+                    text = "動画の\n【 上 】",
+                    color = Color(0xFF00E676),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+                )
+            }
+
+            Surface(
+                color = Color.Black.copy(alpha = 0.7f),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.align(Alignment.CenterStart)
+            ) {
+                Text(
+                    text = "動画の\n【 下 】",
+                    color = Color(0xFFFF5252),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
                 )
             }
         }
@@ -841,7 +878,7 @@ private fun SetupTabContent(
 }
 
 /**
- * インターバル撮影タブコンテンツ（ヘッダーの「残り撮影可能」のフォント色を白に統一）
+ * インターバル撮影タブコンテンツ（ヘッダーの露出時間と撮影数、残り撮影可能枚数の位置を綺麗に整列）
  */
 @Composable
 private fun IntervalTabContent(
@@ -859,7 +896,7 @@ private fun IntervalTabContent(
         )
         PortraitCropGuidesOverlay()
 
-        // ヘッダー（残り撮影可能も含め文字色を白に統一）
+        // ヘッダー（左側に「タイトル・撮影数」、右側に「露出時間・残り撮影可能枚数」を整列）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -899,7 +936,7 @@ private fun IntervalTabContent(
                 )
                 Text(
                     text = "残り撮影可能: 約${remainingShots}枚",
-                    color = Color.White, // ← 白に統一
+                    color = Color.White,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.End
