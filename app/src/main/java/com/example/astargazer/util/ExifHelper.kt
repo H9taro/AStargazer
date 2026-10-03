@@ -1,5 +1,6 @@
 package com.example.astargazer.util
 
+import android.location.Location
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
@@ -10,15 +11,17 @@ import java.util.Locale
 object ExifHelper {
 
     /**
-     * JPEG ファイルに撮影パラメータ (Exif メタデータ) を自動書き込み・記録する
-     * @param file 保存された JPEG ファイル
+     * JPEG/PNG ファイルに撮影パラメータ (Exif メタデータ及ひ GPS 位置情報) を自動書き込み・記録する
+     * @param file 保存された画像ファイル
      * @param iso 撮影に使用された ISO 感度 (例: 1600)
      * @param exposureSeconds 撮影に使用された露出時間 (秒, 例: 4.0)
+     * @param location GPS 位置情報 (Location, オプション)
      */
     fun saveExifAttributes(
         file: File,
         iso: Int,
-        exposureSeconds: Double
+        exposureSeconds: Double,
+        location: Location? = null
     ) {
         if (!file.exists()) return
 
@@ -58,8 +61,13 @@ object ExifHelper {
             // 7. アプリ名
             exif.setAttribute(ExifInterface.TAG_SOFTWARE, "AStargazer 1.0")
 
+            // 8. GPS 位置情報の書き込み (Location が存在する場合)
+            if (location != null) {
+                exif.setGpsInfo(location)
+            }
+
             exif.saveAttributes()
-            Log.d("ExifHelper", "Saved Exif data to ${file.name}: ISO=$iso, Exposure=${exposureSeconds}s, Date=$formattedDate.$formattedSubSec")
+            Log.d("ExifHelper", "Saved Exif data to ${file.name}: ISO=$iso, Exposure=${exposureSeconds}s, GPS=${location?.latitude},${location?.longitude}")
         } catch (e: Exception) {
             Log.e("ExifHelper", "Failed to save Exif data for ${file.name}", e)
         }
