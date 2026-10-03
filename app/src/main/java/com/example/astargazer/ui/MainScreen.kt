@@ -841,7 +841,7 @@ private fun SetupTabContent(
 }
 
 /**
- * インターバル撮影タブコンテンツ（ヘッダーの情報をきれいに左右対称に整列）
+ * インターバル撮影タブコンテンツ（ヘッダーの露出時間と撮影数、残り撮影可能枚数の位置を綺麗に整列）
  */
 @Composable
 private fun IntervalTabContent(
