@@ -69,7 +69,7 @@ object ImageCompositor {
      * 複数枚の静止画ファイル群から比較明合成 (Lighten Blend) 画像を生成する
      * Android の Canvas および PorterDuff.Mode.LIGHTEN を用いてメモリ効率良く高速に合成する
      * ダークフレーム画像が存在する場合は自動的にダーク減算処理を実行する
-     * 左下に「最高画質 - 開始: [日時] / 終了: [日時]」、右下にアプリ名 "AStargazer" のテロップを焼き込む
+     * 左下に「開始日時 ~ 終了日時」、右下にアプリ名 "AStargazer" のテロップを1段小さいフォントで焼き込む
      *
      * @param imageFiles ソース画像ファイルリスト
      * @param outputFile 出力先 JPEG ファイル
@@ -143,7 +143,8 @@ object ImageCompositor {
             val bmpWidth = resultBitmap.width
             val bmpHeight = resultBitmap.height
 
-            val textSize = (bmpHeight.toFloat() / 45f).coerceAtLeast(36f)
+            // フォントサイズを1段小さく調整 (1/45f -> 1/60f)
+            val textSize = (bmpHeight.toFloat() / 60f).coerceAtLeast(28f)
             val padding = bmpWidth * 0.025f
 
             val textPaint = Paint().apply {
@@ -156,10 +157,10 @@ object ImageCompositor {
 
             val startDateTime = ExifHelper.getDateTime(imageFiles.first())
             val endDateTime = ExifHelper.getDateTime(imageFiles.last())
-            val leftText = "最高画質 - 開始: $startDateTime / 終了: $endDateTime"
+            val leftText = "$startDateTime ~ $endDateTime"
             val rightText = "AStargazer"
 
-            // 左下：最高画質 - 開始日時 / 終了日時
+            // 左下：開始日時 ~ 終了日時
             val leftY = bmpHeight - padding
             canvas.drawText(leftText, padding, leftY, textPaint)
 
