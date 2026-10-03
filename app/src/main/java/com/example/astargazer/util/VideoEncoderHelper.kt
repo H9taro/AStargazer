@@ -19,7 +19,7 @@ object VideoEncoderHelper {
 
     /**
      * 静止画ファイル群から MP4 タイムラプス動画を生成する
-     * テレビ等の視聴用に、縦位置画像を左90度回転させて横長（ランドスケープ）動画として出力する
+     * テレビ等の視聴用に、縦位置画像を時計回りに90度回転させて横長（ランドスケープ）動画として出力する
      * 右下に各コマの撮影日時（秒まで）、左下にアプリ名 "AStargazer" のテロップを焼き込む
      */
     fun createTimelapseVideo(
@@ -62,7 +62,9 @@ object VideoEncoderHelper {
             val inputSurface = encoder.createInputSurface()
             encoder.start()
 
-            val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4).apply {
+                setOrientationHint(0) // 既に横長に変換済みの方向を維持
+            }
             var trackIndex = -1
             var muxerStarted = false
 
@@ -70,7 +72,7 @@ object VideoEncoderHelper {
             val frameDurationUs = 1_000_000L / frameRate
 
             val dstRect = Rect(0, 0, targetWidth, targetHeight)
-            val rotateMatrix = Matrix().apply { postRotate(270f) } // 左90度回転 (反時計回り90度)
+            val rotateMatrix = Matrix().apply { postRotate(90f) } // 時計回り90度回転（テレビ視聴用正立化）
 
             // テロップ用ペイント設定
             val paint = Paint().apply {
@@ -86,7 +88,7 @@ object VideoEncoderHelper {
                 val subtractedBitmap = ImageCompositor.subtractDarkFrame(rawBitmap, darkBitmap)
                 if (rawBitmap != subtractedBitmap) rawBitmap.recycle()
 
-                // 縦位置画像を左90度回転させて横長画像に変換
+                // 縦位置画像を時計回りに90度回転させて横長画像に変換
                 val rotatedBitmap = Bitmap.createBitmap(
                     subtractedBitmap,
                     0, 0,
