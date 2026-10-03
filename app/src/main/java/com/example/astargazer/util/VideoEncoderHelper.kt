@@ -1,8 +1,10 @@
 package com.example.astargazer.util
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -14,8 +16,8 @@ import java.io.File
 object VideoEncoderHelper {
 
     /**
-     * 静止画ファイル群から MP4 タイムラプス動画(フルHD 1080p)を生成する
-     * ダークフレーム画像が存在する場合は自動的にダーク減算ノイズ除去を実行する
+     * 静止画ファイル群から MP4 タイムラプス動画を生成する
+     * テレビ等の視聴用に、縦位置画像を左90度回転させて横長（ランドスケープ）動画として出力する
      */
     fun createTimelapseVideo(
         imageFiles: List<File>,
@@ -47,16 +49,9 @@ object VideoEncoderHelper {
 
             if (srcWidth <= 0 || srcHeight <= 0) return false
 
-            // 互換性の高い 1080p (フルHD) 解像度をターゲットにする
-            val targetWidth: Int
-            val targetHeight: Int
-            if (srcWidth >= srcHeight) {
-                targetWidth = 1920
-                targetHeight = 1080
-            } else {
-                targetWidth = 1080
-                targetHeight = 1920
-            }
+            // テレビ等の視聴用に、常に横長（ランドスケープ: 幅1920, 高さ1080 フルHD相当）でエンコード
+            val targetWidth = 1920
+            val targetHeight = 1080
 
             val mimeType = MediaFormat.MIMETYPE_VIDEO_AVC
             val format = MediaFormat.createVideoFormat(mimeType, targetWidth, targetHeight).apply {
@@ -79,19 +74,30 @@ object VideoEncoderHelper {
             val frameDurationUs = 1_000_000L / frameRate
 
             val dstRect = Rect(0, 0, targetWidth, targetHeight)
+            val rotateMatrix = Matrix().apply { postRotate(270f) } // 左90度回転 (反時計回り90度 = 時計回り270度)
 
             for ((index, file) in imageFiles.withIndex()) {
                 val rawBitmap = BitmapFactory.decodeFile(file.absolutePath) ?: continue
-                val bitmap = ImageCompositor.subtractDarkFrame(rawBitmap, darkBitmap)
-                if (rawBitmap != bitmap) rawBitmap.recycle()
+                val subtractedBitmap = ImageCompositor.subtractDarkFrame(rawBitmap, darkBitmap)
+                if (rawBitmap != subtractedBitmap) rawBitmap.recycle()
 
-                // Surface への描画 (フルHD 1080p にスケーリング)
+                // 縦位置画像を左90度回転させて横長画像に変換
+                val rotatedBitmap = Bitmap.createBitmap(
+                    subtractedBitmap,
+                    0, 0,
+                    subtractedBitmap.width, subtractedBitmap.height,
+                    rotateMatrix,
+                    true
+                )
+                if (subtractedBitmap != rotatedBitmap) subtractedBitmap.recycle()
+
+                // Surface への描画 (横長 1920x1080 にスケーリング)
                 val canvas: Canvas = inputSurface.lockCanvas(null)
                 canvas.drawColor(Color.BLACK)
-                val srcRect = Rect(0, 0, bitmap.width, bitmap.height)
-                canvas.drawBitmap(bitmap, srcRect, dstRect, null)
+                val srcRect = Rect(0, 0, rotatedBitmap.width, rotatedBitmap.height)
+                canvas.drawBitmap(rotatedBitmap, srcRect, dstRect, null)
                 inputSurface.unlockCanvasAndPost(canvas)
-                bitmap.recycle()
+                rotatedBitmap.recycle()
 
                 // エンコーダーバッファ読み出し＆Muxer書き込み
                 var draining = true
@@ -158,7 +164,7 @@ object VideoEncoderHelper {
                 muxer.release()
             }
 
-            Log.d("VideoEncoder", "Timelapse video with dark frame subtraction created at ${outputFile.absolutePath} (size: ${outputFile.length()} bytes)")
+            Log.d("VideoEncoder", "Landscape timelapse video created at ${outputFile.absolutePath} (size: ${outputFile.length()} bytes)")
             return outputFile.exists() && outputFile.length() > 0
         } catch (e: Exception) {
             Log.e("VideoEncoder", "Failed to create timelapse video", e)
