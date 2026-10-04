@@ -10,10 +10,6 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
-import androidx.camera.core.Camera
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.ImageProxy
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -76,7 +72,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.astargazer.ui.camera.CameraControlManager
 import com.example.astargazer.ui.camera.CameraPreview
-import com.example.astargazer.util.BitmapUtils
 import com.example.astargazer.util.Camera2BurstSession
 import com.example.astargazer.util.FileViewerHelper
 import com.example.astargazer.util.ImageCompositor
@@ -227,9 +222,6 @@ private fun MainAppContent() {
     // 前回の撮影画像ファイルがストレージに残っているかどうか
     val hasExistingIntervalFiles = remember { StorageHelper.getIntervalImageFiles(context).isNotEmpty() }
 
-    var cameraInstance by remember { mutableStateOf<Camera?>(null) }
-    var imageCaptureInstance by remember { mutableStateOf<ImageCapture?>(null) }
-
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
 
@@ -316,11 +308,6 @@ private fun MainAppContent() {
 
     // インターバル撮影ループ
     fun startIntervalShootingLoop() {
-        val camera = cameraInstance ?: run {
-            statusMessage = "カメラの準備ができていません。"
-            return
-        }
-
         val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
         val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
         var currentRemainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
@@ -492,11 +479,6 @@ private fun MainAppContent() {
 
     // 試写と自動調整（1秒待機で手ブレ防止、最大画質 ＆ ノイズ減算適用 ＆ GPS情報付与）
     fun runTestShootingAndAutoAdjust() {
-        if (cameraInstance == null || imageCaptureInstance == null) {
-            statusMessage = "カメラの準備ができていません。"
-            return
-        }
-
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
 
         isProcessing = true
@@ -655,17 +637,12 @@ private fun MainAppContent() {
                         currentStep = currentStep,
                         capturedTestBitmap = capturedTestBitmap,
                         selectedExposureSeconds = selectedExposureSeconds,
-                        captureIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds),
                         isDropdownExpanded = isDropdownExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
                         onExposureChange = { selectedExposureSeconds = it },
                         onDropdownToggle = { isDropdownExpanded = it },
-                        onShutterClick = onTriggerShutter,
-                        onCameraBound = { camera, imageCapture ->
-                            cameraInstance = camera
-                            imageCaptureInstance = imageCapture
-                        }
+                        onShutterClick = onTriggerShutter
                     )
                 }
 
@@ -678,17 +655,12 @@ private fun MainAppContent() {
                         remainingShots = remainingShots,
                         elapsedSeconds = elapsedSeconds,
                         selectedExposureSeconds = selectedExposureSeconds,
-                        captureIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds),
                         onTriggerShutter = onTriggerShutter,
                         onStartCamera2Burst = {
                             if (!isIntervalShootingActive && !isCamera2BurstActive) {
                                 isCamera2BurstActive = true
                                 isCamera2BurstTestRequested = true
                             }
-                        },
-                        onCameraBound = { camera, imageCapture ->
-                            cameraInstance = camera
-                            imageCaptureInstance = imageCapture
                         }
                     )
                 }
@@ -800,14 +772,12 @@ private fun SetupTabContent(
     currentStep: WorkflowStep,
     capturedTestBitmap: Bitmap?,
     selectedExposureSeconds: Double,
-    captureIso: Int,
     isDropdownExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
     onExposureChange: (Double) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
-    onShutterClick: () -> Unit,
-    onCameraBound: (Camera, ImageCapture) -> Unit
+    onShutterClick: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         if (isCamera2BurstActive) {
@@ -834,10 +804,7 @@ private fun SetupTabContent(
             )
         } else {
             CameraPreview(
-                modifier = Modifier.fillMaxSize(),
-                exposureTimeNs = (selectedExposureSeconds * 1_000_000_000.0).toLong(),
-                iso = captureIso,
-                onCameraBound = onCameraBound
+                modifier = Modifier.fillMaxSize()
             )
             PortraitCropGuidesOverlay()
         }
@@ -1008,10 +975,8 @@ private fun IntervalTabContent(
     remainingShots: Int,
     elapsedSeconds: Int,
     selectedExposureSeconds: Double,
-    captureIso: Int,
     onTriggerShutter: () -> Unit,
-    onStartCamera2Burst: () -> Unit,
-    onCameraBound: (Camera, ImageCapture) -> Unit
+    onStartCamera2Burst: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         if (isCamera2BurstActive) {
@@ -1031,10 +996,7 @@ private fun IntervalTabContent(
             }
         } else {
             CameraPreview(
-                modifier = Modifier.fillMaxSize(),
-                exposureTimeNs = (selectedExposureSeconds * 1_000_000_000.0).toLong(),
-                iso = captureIso,
-                onCameraBound = onCameraBound
+                modifier = Modifier.fillMaxSize()
             )
             PortraitCropGuidesOverlay()
         }
@@ -1085,21 +1047,6 @@ private fun IntervalTabContent(
                     textAlign = TextAlign.End
                 )
             }
-//            Spacer(modifier = Modifier.height(8.dp))
-//            Button(
-//                onClick = onStartCamera2Burst,
-//                enabled = !isIntervalActive && !isCamera2BurstActive,
-//                modifier = Modifier.fillMaxWidth()
-//            ) {
-//                Text("Camera2連写テスト（${Camera2BurstSession.MAX_BATCH_FRAMES}枚）")
-//            }
-//            if (camera2BurstStatus.isNotEmpty() && !isCamera2BurstActive) {
-//                Text(
-//                    text = camera2BurstStatus,
-//                    color = Color.White,
-//                    fontSize = 11.sp
-//                )
-//            }
         }
 
         // シャッターボタン（停止マーク対応）

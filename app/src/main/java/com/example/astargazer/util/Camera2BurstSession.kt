@@ -14,11 +14,13 @@ import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import androidx.camera.lifecycle.ProcessCameraProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -83,6 +85,30 @@ class Camera2BurstSession private constructor(
     companion object {
         const val MAX_BATCH_FRAMES = 3
 
+        private suspend fun awaitCameraXRelease(context: Context) {
+            try {
+                val cameraProvider = withContext(Dispatchers.Main) {
+                    suspendCancellableCoroutine<ProcessCameraProvider> { continuation ->
+                        val future = ProcessCameraProvider.getInstance(context)
+                        future.addListener({
+                            try {
+                                continuation.resume(future.get())
+                            } catch (e: Exception) {
+                                continuation.resumeWithException(e)
+                            }
+                        }, { command -> command.run() })
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    cameraProvider.unbindAll()
+                }
+                delay(100L)
+                Log.i("Camera2Perf", "awaitCameraXRelease completed")
+            } catch (e: Exception) {
+                Log.w("Camera2Burst", "awaitCameraXRelease encountered exception", e)
+            }
+        }
+
         suspend fun open(
             context: Context,
             exposureSeconds: Double,
@@ -90,6 +116,11 @@ class Camera2BurstSession private constructor(
             location: android.location.Location? = null,
             testOutput: Boolean = false
         ): Camera2BurstSession = withContext(Dispatchers.IO) {
+            val openStartTime = System.currentTimeMillis()
+            Log.i("Camera2Perf", "Camera2BurstSession.open開始")
+
+            awaitCameraXRelease(context)
+
             val cameraManager = context.getSystemService(CameraManager::class.java)
             val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
                 cameraManager.getCameraCharacteristics(id)
@@ -139,7 +170,7 @@ class Camera2BurstSession private constructor(
             try {
                 cameraDevice = openCamera(cameraManager, cameraId, cameraExecutor)
                 captureSession = createCaptureSession(cameraDevice, imageReader, cameraHandler)
-                Camera2BurstSession(
+                val session = Camera2BurstSession(
                     cameraDevice = cameraDevice,
                     captureSession = captureSession,
                     imageReader = imageReader,
@@ -150,10 +181,14 @@ class Camera2BurstSession private constructor(
                     sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0,
                     location = location,
                     testOutput = testOutput
-                ).also { session ->
-                    session.jpegSize = jpegSize
-                    imageReader.setOnImageAvailableListener(session::onImageAvailable, cameraHandler)
+                ).also { s ->
+                    s.jpegSize = jpegSize
+                    imageReader.setOnImageAvailableListener(s::onImageAvailable, cameraHandler)
                 }
+                val openDuration = System.currentTimeMillis() - openStartTime
+                Log.i("Camera2Perf", "Camera2BurstSession.open終了")
+                Log.i("Camera2Perf", "open=$openDuration ms")
+                session
             } catch (exception: Exception) {
                 captureSession?.close()
                 cameraDevice?.close()
@@ -229,6 +264,7 @@ class Camera2BurstSession private constructor(
         onFrameSaved: (Camera2CapturedFrame) -> Unit,
         onFailure: (Exception) -> Unit
     ) {
+        Log.i("Camera2Perf", "startRepeatingCapture開始")
         check(!isClosed.get()) { "Camera2セッションはすでに閉じています" }
         check(activeBatch == null && activeContinuous == null) { "別の撮影要求が実行中です" }
 
@@ -315,6 +351,7 @@ class Camera2BurstSession private constructor(
     }
 
     suspend fun stopRepeatingCapture(): List<Camera2CapturedFrame> = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
         val state = activeContinuous ?: return@withContext emptyList()
         try {
             captureSession.stopRepeating()
@@ -329,6 +366,9 @@ class Camera2BurstSession private constructor(
                 Camera2CapturedFrame(index, file, exposureTimeNs, iso)
             }
             nextFrameIndex += frameCount
+            val duration = System.currentTimeMillis() - startTime
+            Log.i("Camera2Perf", "stopRepeatingCapture終了")
+            Log.i("Camera2Perf", "stopRepeatingCapture=$duration ms")
             Log.i("Camera2Burst", "Repeating capture stopped: frames=$frameCount")
             frames
         } finally {
@@ -336,17 +376,45 @@ class Camera2BurstSession private constructor(
         }
     }
 
-    suspend fun captureBatch(frameCount: Int): List<Camera2CapturedFrame> =
-        captureBatchInternal(frameCount) { frameIndex ->
-            if (testOutput) {
-                StorageHelper.createCamera2BurstImageFile(frameIndex, burstId)
-            } else {
-                StorageHelper.createIntervalJpegFile(frameIndex)
+    suspend fun captureBatch(frameCount: Int): List<Camera2CapturedFrame> {
+        val startTime = System.currentTimeMillis()
+        Log.i("Camera2Perf", "captureBatch開始")
+        try {
+            val frames = captureBatchInternal(frameCount) { frameIndex ->
+                if (testOutput) {
+                    StorageHelper.createCamera2BurstImageFile(frameIndex, burstId)
+                } else {
+                    StorageHelper.createIntervalJpegFile(frameIndex)
+                }
             }
+            val duration = System.currentTimeMillis() - startTime
+            Log.i("Camera2Perf", "captureBatch終了")
+            Log.i("Camera2Perf", "captureBatch=$duration ms")
+            return frames
+        } catch (e: Exception) {
+            val duration = System.currentTimeMillis() - startTime
+            Log.i("Camera2Perf", "captureBatch終了")
+            Log.i("Camera2Perf", "captureBatch=$duration ms")
+            throw e
         }
+    }
 
-    suspend fun captureSingleFrame(outputFile: File): Camera2CapturedFrame =
-        captureBatchInternal(frameCount = 1) { outputFile }.single()
+    suspend fun captureSingleFrame(outputFile: File): Camera2CapturedFrame {
+        val startTime = System.currentTimeMillis()
+        Log.i("Camera2Perf", "captureSingleFrame開始")
+        try {
+            val frame = captureBatchInternal(frameCount = 1) { outputFile }.single()
+            val duration = System.currentTimeMillis() - startTime
+            Log.i("Camera2Perf", "captureSingleFrame終了")
+            Log.i("Camera2Perf", "captureSingleFrame=$duration ms")
+            return frame
+        } catch (e: Exception) {
+            val duration = System.currentTimeMillis() - startTime
+            Log.i("Camera2Perf", "captureSingleFrame終了")
+            Log.i("Camera2Perf", "captureSingleFrame=$duration ms")
+            throw e
+        }
+    }
 
     private suspend fun captureBatchInternal(
         frameCount: Int,
@@ -358,7 +426,6 @@ class Camera2BurstSession private constructor(
 
         val batch = BatchState(frameCount, nextFrameIndex, outputFileForIndex)
         activeBatch = batch
-        val startedAt = System.currentTimeMillis()
 
         fun completeIfReady() {
             if (batch.sequenceCompleted.get() &&
@@ -462,7 +529,6 @@ class Camera2BurstSession private constructor(
                 Camera2CapturedFrame(index, file, exposureTimeNs, iso)
             }
             nextFrameIndex += frameCount
-            Log.i("Camera2Burst", "Batch completed in ${System.currentTimeMillis() - startedAt}ms")
             frames
         } finally {
             activeBatch = null
