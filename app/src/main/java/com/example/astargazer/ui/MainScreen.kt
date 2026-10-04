@@ -212,6 +212,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
     }
 }
 
+@androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalCamera2Interop::class)
 @Composable
 private fun MainAppContent() {
@@ -352,7 +353,7 @@ private fun MainAppContent() {
                     location = baseLocation
                 )
 
-                camera2BurstStatus = "Camera2インターバル撮影中..."
+                camera2BurstStatus = "インターバル撮影中..."
                 Log.i("IntervalPerf", "Camera2 session ready; starting repeating capture")
                 session.startRepeatingCapture(
                     onFrameSaved = { frame ->
@@ -366,7 +367,7 @@ private fun MainAppContent() {
                     onFailure = { exception ->
                         coroutineScope.launch(Dispatchers.Main) {
                             isIntervalShootingActive = false
-                            statusMessage = "Camera2インターバル撮影エラー: ${exception.message}"
+                            statusMessage = "インターバル撮影エラー: ${exception.message}"
                         }
                     }
                 )
@@ -1084,21 +1085,21 @@ private fun IntervalTabContent(
                     textAlign = TextAlign.End
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(
-                onClick = onStartCamera2Burst,
-                enabled = !isIntervalActive && !isCamera2BurstActive,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Camera2連写テスト（${Camera2BurstSession.MAX_BATCH_FRAMES}枚）")
-            }
-            if (camera2BurstStatus.isNotEmpty() && !isCamera2BurstActive) {
-                Text(
-                    text = camera2BurstStatus,
-                    color = Color.White,
-                    fontSize = 11.sp
-                )
-            }
+//            Spacer(modifier = Modifier.height(8.dp))
+//            Button(
+//                onClick = onStartCamera2Burst,
+//                enabled = !isIntervalActive && !isCamera2BurstActive,
+//                modifier = Modifier.fillMaxWidth()
+//            ) {
+//                Text("Camera2連写テスト（${Camera2BurstSession.MAX_BATCH_FRAMES}枚）")
+//            }
+//            if (camera2BurstStatus.isNotEmpty() && !isCamera2BurstActive) {
+//                Text(
+//                    text = camera2BurstStatus,
+//                    color = Color.White,
+//                    fontSize = 11.sp
+//                )
+//            }
         }
 
         // シャッターボタン（停止マーク対応）
