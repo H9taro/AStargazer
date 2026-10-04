@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.time.Duration.Companion.milliseconds
 
 data class Camera2CapturedFrame(
     val index: Int,
@@ -78,7 +79,7 @@ class Camera2BurstSession private constructor(
         val failed = AtomicBoolean(false)
         val metadataByIndex = ConcurrentHashMap<Int, Pair<Long?, Int?>>()
         val filesByIndex = ConcurrentHashMap<Int, File>()
-        val processingIndices = ConcurrentHashMap.newKeySet<Int>()
+        val processingIndices: MutableSet<Int> = ConcurrentHashMap.newKeySet()
         val completion = CompletableDeferred<Unit>()
     }
 
@@ -90,19 +91,22 @@ class Camera2BurstSession private constructor(
                 val cameraProvider = withContext(Dispatchers.Main) {
                     suspendCancellableCoroutine<ProcessCameraProvider> { continuation ->
                         val future = ProcessCameraProvider.getInstance(context)
-                        future.addListener({
-                            try {
-                                continuation.resume(future.get())
-                            } catch (e: Exception) {
-                                continuation.resumeWithException(e)
-                            }
-                        }, { command -> command.run() })
+                        future.addListener(
+                            {
+                                try {
+                                    continuation.resume(future.get())
+                                } catch (e: Exception) {
+                                    continuation.resumeWithException(e)
+                                }
+                            },
+                            Runnable::run
+                        )
                     }
                 }
                 withContext(Dispatchers.Main) {
                     cameraProvider.unbindAll()
                 }
-                delay(100L)
+                delay(100.milliseconds)
                 Log.i("Camera2Perf", "awaitCameraXRelease completed")
             } catch (e: Exception) {
                 Log.w("Camera2Burst", "awaitCameraXRelease encountered exception", e)
@@ -123,31 +127,30 @@ class Camera2BurstSession private constructor(
 
             val cameraManager = context.getSystemService(CameraManager::class.java)
             val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
-                cameraManager.getCameraCharacteristics(id)
-                    .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+                cameraManager.getCameraCharacteristics(id)[CameraCharacteristics.LENS_FACING] ==
+                    CameraCharacteristics.LENS_FACING_BACK
             } ?: error("背面カメラが見つかりません")
 
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
-            val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            val capabilities = characteristics[CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES]
                 ?: intArrayOf()
             if (!capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)) {
                 Log.w("Camera2Burst", "MANUAL_SENSOR capability is not advertised; validating capture results")
             }
 
-            val streamMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val streamMap = characteristics[CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP]
                 ?: error("カメラのJPEG出力情報を取得できません")
             val jpegSize = streamMap.getOutputSizes(ImageFormat.JPEG)
                 ?.maxByOrNull { it.width.toLong() * it.height }
                 ?: error("JPEG出力サイズがありません")
             val requestedExposureNs = (exposureSeconds * 1_000_000_000.0).toLong()
             require(requestedExposureNs > 0L) { "露出時間は0より大きい値を指定してください" }
-            val sensitivityRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
-            val exposureRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
-            val actualRequestExposureNs = requestedExposureNs
+            val sensitivityRange = characteristics[CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE]
+            val exposureRange = characteristics[CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE]
             val actualRequestIso = sensitivityRange?.let {
                 iso.coerceIn(it.lower, it.upper)
             } ?: iso
-            if (exposureRange != null && requestedExposureNs !in exposureRange) {
+            if (exposureRange != null && (requestedExposureNs !in exposureRange)) {
                 Log.w(
                     "Camera2Burst",
                     "Requested exposure ${exposureSeconds}s is outside the advertised range " +
@@ -176,9 +179,9 @@ class Camera2BurstSession private constructor(
                     imageReader = imageReader,
                     cameraThread = cameraThread,
                     cameraHandler = cameraHandler,
-                    requestedExposureNs = actualRequestExposureNs,
+                    requestedExposureNs = requestedExposureNs,
                     requestedIso = actualRequestIso,
-                    sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0,
+                    sensorOrientation = characteristics[CameraCharacteristics.SENSOR_ORIENTATION] ?: 0,
                     location = location,
                     testOutput = testOutput
                 ).also { s ->
@@ -203,27 +206,34 @@ class Camera2BurstSession private constructor(
             cameraId: String,
             executor: Executor
         ): CameraDevice = suspendCancellableCoroutine { continuation ->
-            cameraManager.openCamera(cameraId, executor, object : CameraDevice.StateCallback() {
-                override fun onOpened(camera: CameraDevice) {
-                    if (continuation.isActive) continuation.resume(camera) else camera.close()
-                }
-
-                override fun onDisconnected(camera: CameraDevice) {
-                    camera.close()
-                    if (continuation.isActive) {
-                        continuation.resumeWithException(IllegalStateException("カメラ接続が切断されました"))
+            try {
+                cameraManager.openCamera(cameraId, executor, object : CameraDevice.StateCallback() {
+                    override fun onOpened(camera: CameraDevice) {
+                        if (continuation.isActive) continuation.resume(camera) else camera.close()
                     }
-                }
 
-                override fun onError(camera: CameraDevice, error: Int) {
-                    camera.close()
-                    if (continuation.isActive) {
-                        continuation.resumeWithException(IllegalStateException("カメラを開けませんでした: error=$error"))
+                    override fun onDisconnected(camera: CameraDevice) {
+                        camera.close()
+                        if (continuation.isActive) {
+                            continuation.resumeWithException(IllegalStateException("カメラ接続が切断されました"))
+                        }
                     }
+
+                    override fun onError(camera: CameraDevice, error: Int) {
+                        camera.close()
+                        if (continuation.isActive) {
+                            continuation.resumeWithException(IllegalStateException("カメラを開けませんでした: error=$error"))
+                        }
+                    }
+                })
+            } catch (e: SecurityException) {
+                if (continuation.isActive) {
+                    continuation.resumeWithException(e)
                 }
-            })
+            }
         }
 
+        @Suppress("DEPRECATION")
         private suspend fun createCaptureSession(
             camera: CameraDevice,
             imageReader: ImageReader,
@@ -356,7 +366,7 @@ class Camera2BurstSession private constructor(
         try {
             captureSession.stopRepeating()
             val timeoutMs = maxOf(60_000L, requestedExposureNs / 1_000_000L + 30_000L)
-            withTimeout(timeoutMs) { state.completion.await() }
+            withTimeout(timeoutMs.milliseconds) { state.completion.await() }
 
             val frameCount = state.resultsReceived.get()
             val frames = (0 until frameCount).map { offset ->
@@ -402,12 +412,12 @@ class Camera2BurstSession private constructor(
     suspend fun captureSingleFrame(outputFile: File): Camera2CapturedFrame {
         val startTime = System.currentTimeMillis()
         Log.i("Camera2Perf", "captureSingleFrame開始")
-        try {
+        return try {
             val frame = captureBatchInternal(frameCount = 1) { outputFile }.single()
             val duration = System.currentTimeMillis() - startTime
             Log.i("Camera2Perf", "captureSingleFrame終了")
             Log.i("Camera2Perf", "captureSingleFrame=$duration ms")
-            return frame
+            frame
         } catch (e: Exception) {
             val duration = System.currentTimeMillis() - startTime
             Log.i("Camera2Perf", "captureSingleFrame終了")
@@ -514,7 +524,7 @@ class Camera2BurstSession private constructor(
             )
 
             val timeoutMs = maxOf(60_000L, requestedExposureNs / 1_000_000L * frameCount + 30_000L)
-            withTimeout(timeoutMs) { batch.completion.await() }
+            withTimeout(timeoutMs.milliseconds) { batch.completion.await() }
 
             val frames = (0 until frameCount).map { offset ->
                 val index = batch.firstIndex + offset
@@ -554,7 +564,9 @@ class Camera2BurstSession private constructor(
                 val outputFile = StorageHelper.createIntervalJpegFile(frameIndex)
                 fileWriterScope.launch {
                     try {
-                        FileOutputStream(outputFile).use { it.write(jpegBytes) }
+                        withContext(Dispatchers.IO) {
+                            FileOutputStream(outputFile).use { it.write(jpegBytes) }
+                        }
                         continuous.filesByIndex[frameIndex] = outputFile
                         processContinuousFrame(continuous, frameIndex)
                     } catch (exception: Exception) {
@@ -589,7 +601,9 @@ class Camera2BurstSession private constructor(
             val outputFile = batch.outputFileForIndex(frameIndex)
             fileWriterScope.launch {
                 try {
-                    FileOutputStream(outputFile).use { it.write(jpegBytes) }
+                    withContext(Dispatchers.IO) {
+                        FileOutputStream(outputFile).use { it.write(jpegBytes) }
+                    }
                     batch.filesByIndex[frameIndex] = outputFile
                     Log.i("Camera2Burst", "Saved frame $frameIndex: ${outputFile.absolutePath}")
                     batch.imagesSaved.incrementAndGet()

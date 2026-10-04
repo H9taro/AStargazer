@@ -1,5 +1,3 @@
-@file:OptIn(ExperimentalCamera2Interop::class)
-
 package com.example.astargazer.ui
 
 import android.Manifest
@@ -78,6 +76,8 @@ import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.LocationHelper
 import com.example.astargazer.util.StorageHelper
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -208,7 +208,7 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
 }
 
 @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalCamera2Interop::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainAppContent() {
     val context = LocalContext.current
@@ -247,7 +247,7 @@ private fun MainAppContent() {
         if (isIntervalShootingActive) {
             elapsedSeconds = 0
             while (isIntervalShootingActive) {
-                delay(1000L)
+                delay(1.seconds)
                 elapsedSeconds++
             }
         }
@@ -256,7 +256,7 @@ private fun MainAppContent() {
     LaunchedEffect(isCamera2BurstTestRequested) {
         if (isCamera2BurstTestRequested) {
             camera2BurstStatus = "CameraXを解放してCamera2連写を準備中..."
-            delay(500L)
+            delay(500.milliseconds)
             var session: Camera2BurstSession? = null
             try {
                 val iso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
@@ -281,10 +281,10 @@ private fun MainAppContent() {
 
     // 露出時間が変更されたとき、すでに同じ秒数のダークフレームがあれば案内メッセージに反映
     LaunchedEffect(selectedExposureSeconds) {
-        if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
-            statusMessage = "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: 既存のダークフレームが利用可能です。そのままシャッターを押して北極星合わせへ進むか、露出時間を再選択できます。"
+        statusMessage = if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+            "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: 既存のダークフレームが利用可能です。そのままシャッターを押して北極星合わせへ進むか、露出時間を再選択できます。"
         } else {
-            statusMessage = "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: レンズを覆ってシャッターを押してください（ダーク撮影）。"
+            "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: レンズを覆ってシャッターを押してください（ダーク撮影）。"
         }
     }
 
@@ -331,7 +331,7 @@ private fun MainAppContent() {
             try {
                 isCamera2BurstActive = true
                 camera2BurstStatus = "CameraXを解放してCamera2連続撮影を準備中..."
-                delay(500L)
+                delay(500.milliseconds)
                 if (!isIntervalShootingActive) return@launch
                 session = Camera2BurstSession.open(
                     context = context,
@@ -359,7 +359,7 @@ private fun MainAppContent() {
                     }
                 )
 
-                while (isIntervalShootingActive) delay(50L)
+                while (isIntervalShootingActive) delay(50.milliseconds)
                 val frames = session.stopRepeatingCapture()
                 shotCount = maxOf(shotCount, frames.size)
                 if (frames.isNotEmpty()) isIntervalCompleted = true
@@ -428,7 +428,7 @@ private fun MainAppContent() {
         coroutineScope.launch {
             var session: Camera2BurstSession? = null
             try {
-                delay(500L)
+                delay(500.milliseconds)
                 session = Camera2BurstSession.open(
                     context = context,
                     exposureSeconds = exposureSeconds,
@@ -490,7 +490,7 @@ private fun MainAppContent() {
         coroutineScope.launch {
             var session: Camera2BurstSession? = null
             try {
-                delay(500L)
+                delay(500.milliseconds)
                 session = Camera2BurstSession.open(
                     context = context,
                     exposureSeconds = selectedExposureSeconds,
@@ -655,13 +655,7 @@ private fun MainAppContent() {
                         remainingShots = remainingShots,
                         elapsedSeconds = elapsedSeconds,
                         selectedExposureSeconds = selectedExposureSeconds,
-                        onTriggerShutter = onTriggerShutter,
-                        onStartCamera2Burst = {
-                            if (!isIntervalShootingActive && !isCamera2BurstActive) {
-                                isCamera2BurstActive = true
-                                isCamera2BurstTestRequested = true
-                            }
-                        }
+                        onTriggerShutter = onTriggerShutter
                     )
                 }
 
@@ -975,8 +969,7 @@ private fun IntervalTabContent(
     remainingShots: Int,
     elapsedSeconds: Int,
     selectedExposureSeconds: Double,
-    onTriggerShutter: () -> Unit,
-    onStartCamera2Burst: () -> Unit
+    onTriggerShutter: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         if (isCamera2BurstActive) {
