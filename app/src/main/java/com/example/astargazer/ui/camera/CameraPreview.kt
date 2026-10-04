@@ -24,6 +24,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 @Composable
 fun CameraPreview(
     modifier: Modifier = Modifier,
+    exposureTimeNs: Long,
+    iso: Int,
     onCameraBound: (Camera, ImageCapture) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
@@ -34,7 +36,7 @@ fun CameraPreview(
         }
     }
 
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, exposureTimeNs, iso) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         val executor = ContextCompat.getMainExecutor(context)
 
@@ -50,7 +52,19 @@ fun CameraPreview(
                     .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                     .setFlashMode(ImageCapture.FLASH_MODE_OFF)
 
-                Camera2Interop.Extender(imageCaptureBuilder)
+                val imageCaptureInterop = Camera2Interop.Extender(imageCaptureBuilder)
+                imageCaptureInterop
+                    .setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AE_MODE,
+                        CaptureRequest.CONTROL_AE_MODE_OFF
+                    )
+                    .setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AF_MODE,
+                        CaptureRequest.CONTROL_AF_MODE_OFF
+                    )
+                    .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
+                    .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
+                    .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureTimeNs)
                     .setSessionCaptureCallback(object : CameraCaptureSession.CaptureCallback() {
                         override fun onCaptureCompleted(
                             session: CameraCaptureSession,

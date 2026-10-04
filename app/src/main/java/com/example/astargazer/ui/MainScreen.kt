@@ -74,10 +74,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.google.common.util.concurrent.ListenableFuture
 import com.example.astargazer.ui.camera.CameraControlManager
 import com.example.astargazer.ui.camera.CameraPreview
 import com.example.astargazer.util.BitmapUtils
+import com.example.astargazer.util.Camera2BurstSession
 import com.example.astargazer.util.FileViewerHelper
 import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
@@ -86,32 +86,14 @@ import com.example.astargazer.util.StorageHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.FileOutputStream
-import java.util.concurrent.Executor
 import java.util.Locale
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * 露出時間の選択肢（秒数: 0.25秒, 0.5秒, 1秒, 2秒, 4秒, 8秒, 15秒, 30秒）
  */
 val EXPOSURE_TIMES_SECONDS = listOf(0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
-
-private suspend fun ListenableFuture<*>.awaitCompletion() {
-    suspendCancellableCoroutine<Unit> { continuation ->
-        addListener({
-            try {
-                get()
-                continuation.resume(Unit)
-            } catch (exception: Exception) {
-                continuation.resumeWithException(exception)
-            }
-        }, Executor { command -> command.run() })
-        continuation.invokeOnCancellation { cancel(false) }
-    }
-}
 
 /**
  * 露出時間のフォーマット
@@ -251,6 +233,9 @@ private fun MainAppContent() {
     var isProcessing by remember { mutableStateOf(false) }
 
     var isIntervalShootingActive by remember { mutableStateOf(false) }
+    var isCamera2BurstActive by remember { mutableStateOf(false) }
+    var isCamera2BurstTestRequested by remember { mutableStateOf(false) }
+    var camera2BurstStatus by remember { mutableStateOf("") }
     var shotCount by remember { mutableIntStateOf(0) }
     var remainingShots by remember { mutableIntStateOf(0) }
     var elapsedSeconds by remember { mutableIntStateOf(0) }
@@ -271,6 +256,32 @@ private fun MainAppContent() {
             while (isIntervalShootingActive) {
                 delay(1000L)
                 elapsedSeconds++
+            }
+        }
+    }
+
+    LaunchedEffect(isCamera2BurstTestRequested) {
+        if (isCamera2BurstTestRequested) {
+            camera2BurstStatus = "CameraXを解放してCamera2連写を準備中..."
+            delay(500L)
+            var session: Camera2BurstSession? = null
+            try {
+                val iso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+                session = Camera2BurstSession.open(
+                    context = context,
+                    exposureSeconds = selectedExposureSeconds,
+                    iso = iso,
+                    testOutput = true
+                )
+                val frames = session.captureBatch(Camera2BurstSession.MAX_BATCH_FRAMES)
+                camera2BurstStatus = "連写完了: ${frames.size}枚をPictures/AStargazer/Camera2Burstに保存しました"
+            } catch (exception: Exception) {
+                camera2BurstStatus = "連写失敗: ${exception.message ?: "原因不明"}"
+                Log.e("Camera2Burst", "Burst prototype failed", exception)
+            } finally {
+                session?.close()
+                isCamera2BurstActive = false
+                isCamera2BurstTestRequested = false
             }
         }
     }
@@ -302,69 +313,9 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // インターバル1コマ撮影（詳細パフォーマンス診断ログ付き）
-    suspend fun captureIntervalFrame(imageCapture: ImageCapture, index: Int, iso: Int, baseLocation: android.location.Location?): Boolean {
-        val frameStartTime = System.currentTimeMillis()
-        Log.i("IntervalPerf", "=== [Frame $index] Requesting capture at $frameStartTime (Exposure: ${selectedExposureSeconds}s) ===")
-
-        return suspendCancellableCoroutine { continuation ->
-            coroutineScope.launch {
-                if (index == 1) {
-                    delay(1000L)
-                }
-
-                val outputFile = StorageHelper.createIntervalImageFile(context, index)
-                val outputOptions = ImageCapture.OutputFileOptions.Builder(outputFile).build()
-                val executor = ContextCompat.getMainExecutor(context)
-
-                val takePicStartTime = System.currentTimeMillis()
-                Log.i("IntervalPerf", "[Frame $index] takePicture() invoked at $takePicStartTime (Delay from start: ${takePicStartTime - frameStartTime}ms)")
-
-                imageCapture.takePicture(
-                    outputOptions,
-                    executor,
-                    object : ImageCapture.OnImageSavedCallback {
-                        override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                            val onSavedTime = System.currentTimeMillis()
-                            Log.i("IntervalPerf", "[Frame $index] onImageSaved() callback received at $onSavedTime (Camera/Storage duration: ${onSavedTime - takePicStartTime}ms)")
-
-                            if (continuation.isActive) continuation.resume(true)
-
-                            coroutineScope.launch(Dispatchers.IO) {
-                                val exifStartTime = System.currentTimeMillis()
-                                try {
-                                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
-                                        file = outputFile,
-                                        iso = iso,
-                                        exposureSeconds = selectedExposureSeconds,
-                                        location = baseLocation
-                                    )
-                                    val exifEndTime = System.currentTimeMillis()
-                                    Log.i("IntervalPerf", "[Frame $index] Exif write completed in ${exifEndTime - exifStartTime}ms (Total Frame Time: ${exifEndTime - frameStartTime}ms)")
-                                } catch (e: Exception) {
-                                    Log.e("IntervalPerf", "[Frame $index] Exif write failed", e)
-                                }
-                            }
-                        }
-
-                        override fun onError(exception: ImageCaptureException) {
-                            val onErrorTime = System.currentTimeMillis()
-                            Log.e("IntervalPerf", "[Frame $index] takePicture ERROR at $onErrorTime: ${exception.message}", exception)
-                            if (continuation.isActive) continuation.resume(false)
-                        }
-                    }
-                )
-            }
-        }
-    }
-
     // インターバル撮影ループ
     fun startIntervalShootingLoop() {
         val camera = cameraInstance ?: run {
-            statusMessage = "カメラの準備ができていません。"
-            return
-        }
-        val imageCapture = imageCaptureInstance ?: run {
             statusMessage = "カメラの準備ができていません。"
             return
         }
@@ -374,50 +325,64 @@ private fun MainAppContent() {
         var currentRemainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
 
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
-        
         // インターバル開始時にGPS位置情報を1回だけ取得
         val baseLocation = LocationHelper.getLastKnownLocation(context)
+        val exposureSeconds = selectedExposureSeconds
 
         isIntervalShootingActive = true
+        isCamera2BurstActive = false
+        camera2BurstStatus = "インターバル撮影を準備中..."
         shotCount = 0
         elapsedSeconds = 0
         remainingShots = currentRemainingShots
 
-        Log.i("IntervalPerf", ">>> START INTERVAL SHOOTING LOOP (Exposure: ${selectedExposureSeconds}s, ISO: $optimalIso) <<<")
+        Log.i("IntervalPerf", ">>> START INTERVAL LOOP (Exposure: ${exposureSeconds}s, ISO: $optimalIso) <<<")
 
         coroutineScope.launch {
+            var session: Camera2BurstSession? = null
             try {
-                val exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
-                val settingsStartTime = System.currentTimeMillis()
-                CameraControlManager.setManualFocusAndExposure(
-                    camera = camera,
-                    focusDistance = 0.0f,
+                isCamera2BurstActive = true
+                camera2BurstStatus = "CameraXを解放してCamera2連続撮影を準備中..."
+                delay(500L)
+                if (!isIntervalShootingActive) return@launch
+                session = Camera2BurstSession.open(
+                    context = context,
+                    exposureSeconds = exposureSeconds,
                     iso = optimalIso,
-                    exposureTimeNs = exposureTimeNs
-                ).awaitCompletion()
-                Log.i(
-                    "IntervalPerf",
-                    "Manual camera settings applied in ${System.currentTimeMillis() - settingsStartTime}ms"
+                    location = baseLocation
                 )
+
+                camera2BurstStatus = "Camera2インターバル撮影中..."
+                Log.i("IntervalPerf", "Camera2 session ready; starting repeating capture")
+                session.startRepeatingCapture(
+                    onFrameSaved = { frame ->
+                        coroutineScope.launch(Dispatchers.Main) {
+                            shotCount = maxOf(shotCount, frame.index)
+                            currentRemainingShots = (currentRemainingShots - 1).coerceAtLeast(0)
+                            remainingShots = currentRemainingShots
+                            isIntervalCompleted = true
+                        }
+                    },
+                    onFailure = { exception ->
+                        coroutineScope.launch(Dispatchers.Main) {
+                            isIntervalShootingActive = false
+                            statusMessage = "Camera2インターバル撮影エラー: ${exception.message}"
+                        }
+                    }
+                )
+
+                while (isIntervalShootingActive) delay(50L)
+                val frames = session.stopRepeatingCapture()
+                shotCount = maxOf(shotCount, frames.size)
+                if (frames.isNotEmpty()) isIntervalCompleted = true
             } catch (exception: Exception) {
                 isIntervalShootingActive = false
-                statusMessage = "カメラ設定の適用に失敗しました: ${exception.message}"
-                Log.e("IntervalPerf", "Failed to apply manual camera settings", exception)
-            }
-
-            while (isIntervalShootingActive) {
-                shotCount++
-                if (currentRemainingShots > 0) {
-                    currentRemainingShots--
-                    remainingShots = currentRemainingShots
-                }
-
-                val success = captureIntervalFrame(imageCapture, shotCount, optimalIso, baseLocation)
-                if (success) {
-                    isIntervalCompleted = true
-                } else {
-                    Log.w("IntervalPerf", "Failed to capture frame $shotCount")
-                }
+                statusMessage = "Camera2インターバル撮影エラー: ${exception.message}"
+                Log.e("IntervalPerf", "Camera2 interval capture failed", exception)
+            } finally {
+                session?.close()
+                isIntervalShootingActive = false
+                isCamera2BurstActive = false
             }
             Log.i("IntervalPerf", ">>> STOP INTERVAL SHOOTING LOOP (Total captured: $shotCount frames) <<<")
         }
@@ -449,6 +414,7 @@ private fun MainAppContent() {
                 MainMenuTab.INTERVAL -> {
                     if (isIntervalShootingActive) {
                         isIntervalShootingActive = false
+                        camera2BurstStatus = "停止要求を受け付けました。撮影中のコマを保存して停止します。"
                         if (shotCount > 0) isIntervalCompleted = true
                     } else {
                         startIntervalShootingLoop()
@@ -461,54 +427,71 @@ private fun MainAppContent() {
 
     // ダークフレーム撮影実行（GPS情報付与）
     fun runDarkFrameShooting() {
-        val imageCapture = imageCaptureInstance ?: run {
-            statusMessage = "カメラの準備ができていません。"
-            return
-        }
-
-        isProcessing = true
-        statusMessage = "ダークフレーム撮影中 (${formatExposureSeconds(selectedExposureSeconds)})..."
-
-        val darkFrameFile = StorageHelper.getDarkFrameFile(context)
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(darkFrameFile).build()
-        val executor = ContextCompat.getMainExecutor(context)
+        val exposureSeconds = selectedExposureSeconds
+        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(exposureSeconds)
+        val exposureTimeNs = (exposureSeconds * 1_000_000_000.0).toLong()
         val currentLocation = LocationHelper.getLastKnownLocation(context)
+        val darkFrameFile = StorageHelper.getDarkFrameFile(context)
+        val tempJpegFile = StorageHelper.getDarkFrameCaptureTempFile(context)
+        isProcessing = true
+        isCamera2BurstActive = true
+        statusMessage = "Camera2でダークフレーム撮影中 (${formatExposureSeconds(exposureSeconds)})..."
 
-        imageCapture.takePicture(
-            outputOptions,
-            executor,
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    isProcessing = false
-                    val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+        coroutineScope.launch {
+            var session: Camera2BurstSession? = null
+            try {
+                delay(500L)
+                session = Camera2BurstSession.open(
+                    context = context,
+                    exposureSeconds = exposureSeconds,
+                    iso = optimalIso,
+                    location = currentLocation
+                )
+                val frame = session.captureSingleFrame(tempJpegFile)
+                session.close()
+                session = null
+
+                withContext(Dispatchers.IO) {
+                    val bitmap = BitmapFactory.decodeFile(tempJpegFile.absolutePath)
+                        ?: error("ダークフレームJPEGを読み込めませんでした")
+                    try {
+                        FileOutputStream(darkFrameFile).use { output ->
+                            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                                "ダークフレームPNGを保存できませんでした"
+                            }
+                        }
+                    } finally {
+                        bitmap.recycle()
+                    }
+
                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                         file = darkFrameFile,
-                        iso = optimalIso,
-                        exposureSeconds = selectedExposureSeconds,
+                        iso = frame.iso ?: optimalIso,
+                        exposureSeconds =
+                            (frame.exposureTimeNs ?: exposureTimeNs) / 1_000_000_000.0,
                         location = currentLocation
                     )
-                    FileViewerHelper.scanFile(context, darkFrameFile)
-
-                    statusMessage = "ダークフレーム撮影完了。レンズカバーを外し、星空に向けてシャッターを押してください。"
-                    currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
                 }
+                tempJpegFile.delete()
+                FileViewerHelper.scanFile(context, darkFrameFile)
 
-                override fun onError(exception: ImageCaptureException) {
-                    Log.e("MainScreen", "Dark frame capture failed", exception)
-                    isProcessing = false
-                    statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
-                }
+                statusMessage = "ダークフレーム撮影完了。レンズカバーを外し、星空に向けてシャッターを押してください。"
+                currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+            } catch (exception: Exception) {
+                Log.e("MainScreen", "Dark frame capture failed", exception)
+                statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
+            } finally {
+                session?.close()
+                tempJpegFile.delete()
+                isProcessing = false
+                isCamera2BurstActive = false
             }
-        )
+        }
     }
 
     // 試写と自動調整（1秒待機で手ブレ防止、最大画質 ＆ ノイズ減算適用 ＆ GPS情報付与）
     fun runTestShootingAndAutoAdjust() {
-        val camera = cameraInstance ?: run {
-            statusMessage = "カメラの準備ができていません。"
-            return
-        }
-        val imageCapture = imageCaptureInstance ?: run {
+        if (cameraInstance == null || imageCaptureInstance == null) {
             statusMessage = "カメラの準備ができていません。"
             return
         }
@@ -516,97 +499,79 @@ private fun MainAppContent() {
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
 
         isProcessing = true
+        isCamera2BurstActive = true
         statusMessage = "試写を実行中: 無限遠ピント & ISO($optimalIso)..."
 
-        val executor = ContextCompat.getMainExecutor(context)
         val currentLocation = LocationHelper.getLastKnownLocation(context)
 
         coroutineScope.launch {
+            var session: Camera2BurstSession? = null
             try {
-                CameraControlManager.setManualFocusAndExposure(
-                    camera = camera,
-                    focusDistance = 0.0f,
+                delay(500L)
+                session = Camera2BurstSession.open(
+                    context = context,
+                    exposureSeconds = selectedExposureSeconds,
                     iso = optimalIso,
-                    exposureTimeNs = (selectedExposureSeconds * 1_000_000_000L).toLong()
-                ).awaitCompletion()
-            } catch (exception: Exception) {
-                isProcessing = false
-                statusMessage = "カメラ設定の適用に失敗しました: ${exception.message}"
-                Log.e("MainScreen", "Failed to apply manual camera settings", exception)
-                return@launch
-            }
+                    location = currentLocation,
+                    testOutput = true
+                )
+                val frame = session.captureBatch(1).single()
+                val bitmap = withContext(Dispatchers.IO) {
+                    BitmapFactory.decodeFile(frame.file.absolutePath)
+                } ?: error("Camera2試写画像をBitmapに変換できませんでした")
 
-            // ★ 試写のシャッター押下直後の1秒待機（手ブレ対策）
-            delay(1000L)
-
-            imageCapture.takePicture(
-                executor,
-                object : ImageCapture.OnImageCapturedCallback() {
-                    override fun onCaptureSuccess(image: ImageProxy) {
-                        coroutineScope.launch(Dispatchers.IO) {
-                            val bitmap = BitmapUtils.imageProxyToBitmap(image)
-                            image.close()
-
-                            if (bitmap != null) {
-                                val darkFile = StorageHelper.getDarkFrameFile(context)
-                                val finalBitmap = if (darkFile.exists()) {
-                                    val darkBmp = BitmapFactory.decodeFile(darkFile.absolutePath)
-                                    if (darkBmp != null) {
-                                        val subtracted = ImageCompositor.subtractDarkFrame(bitmap, darkBmp)
-                                        bitmap.recycle()
-                                        darkBmp.recycle()
-                                        subtracted
-                                    } else {
-                                        bitmap
-                                    }
-                                } else {
-                                    bitmap
-                                }
-
-                                capturedTestBitmap = finalBitmap
-
-                                val testFile = StorageHelper.getTestShootingFile()
-                                try {
-                                    FileOutputStream(testFile).use { out ->
-                                        finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                                    }
-                                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
-                                        file = testFile,
-                                        iso = optimalIso,
-                                        exposureSeconds = selectedExposureSeconds,
-                                        location = currentLocation
-                                    )
-                                    FileViewerHelper.scanFile(context, testFile)
-                                } catch (e: Exception) {
-                                    Log.e("MainScreen", "Failed to save test image", e)
-                                }
-
-                                val score = ImageContrastAnalyzer.calculateContrastScore(finalBitmap)
-                                val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
-
-                                withContext(Dispatchers.Main) {
-                                    isProcessing = false
-                                    statusMessage = "試写調整完了 (スコア: $scoreFormatted, ノイズ減算済)。設定完了！"
-                                    currentStep = WorkflowStep.SETUP_COMPLETED
-                                    isSetupCompleted = true
-                                    selectedTab = MainMenuTab.INTERVAL
-                                }
-                            } else {
-                                withContext(Dispatchers.Main) {
-                                    isProcessing = false
-                                    statusMessage = "試写画像の取得に失敗しました。"
-                                }
-                            }
+                val darkFile = StorageHelper.getDarkFrameFile(context)
+                val finalBitmap = if (darkFile.exists()) {
+                    val darkBmp = withContext(Dispatchers.IO) {
+                        BitmapFactory.decodeFile(darkFile.absolutePath)
+                    }
+                    if (darkBmp != null) {
+                        val subtracted = withContext(Dispatchers.Default) {
+                            ImageCompositor.subtractDarkFrame(bitmap, darkBmp)
                         }
+                        bitmap.recycle()
+                        darkBmp.recycle()
+                        subtracted
+                    } else {
+                        bitmap
                     }
-
-                    override fun onError(exception: ImageCaptureException) {
-                        Log.e("MainScreen", "Test capture failed", exception)
-                        isProcessing = false
-                        statusMessage = "試写撮影エラー: ${exception.message}"
-                    }
+                } else {
+                    bitmap
                 }
-            )
+
+                val testFile = StorageHelper.getTestShootingFile()
+                withContext(Dispatchers.IO) {
+                    FileOutputStream(testFile).use { out ->
+                        finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                    }
+                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
+                        file = testFile,
+                        iso = frame.iso ?: optimalIso,
+                        exposureSeconds = (frame.exposureTimeNs ?: 0L) / 1_000_000_000.0,
+                        location = currentLocation
+                    )
+                    FileViewerHelper.scanFile(context, testFile)
+                }
+                session.close()
+                session = null
+
+                val score = withContext(Dispatchers.Default) {
+                    ImageContrastAnalyzer.calculateContrastScore(finalBitmap)
+                }
+                val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
+                capturedTestBitmap = finalBitmap
+                statusMessage = "試写調整完了 (スコア: $scoreFormatted, ノイズ減算済)。設定完了！"
+                currentStep = WorkflowStep.SETUP_COMPLETED
+                isSetupCompleted = true
+                selectedTab = MainMenuTab.INTERVAL
+            } catch (exception: Exception) {
+                Log.e("MainScreen", "Test capture failed", exception)
+                statusMessage = "試写撮影エラー: ${exception.message}"
+            } finally {
+                session?.close()
+                isProcessing = false
+                isCamera2BurstActive = false
+            }
         }
     }
 
@@ -626,7 +591,7 @@ private fun MainAppContent() {
                 contentColor = Color.White
             ) {
                 MainMenuTab.entries.forEach { tab ->
-                    val enabled = when (tab) {
+                    val enabled = !isCamera2BurstActive && !isIntervalShootingActive && when (tab) {
                         MainMenuTab.SETUP -> true
                         MainMenuTab.INTERVAL -> isSetupCompleted
                         MainMenuTab.SAVE -> isIntervalCompleted || hasExistingIntervalFiles
@@ -685,9 +650,11 @@ private fun MainAppContent() {
             when (selectedTab) {
                 MainMenuTab.SETUP -> {
                     SetupTabContent(
+                        isCamera2BurstActive = isCamera2BurstActive,
                         currentStep = currentStep,
                         capturedTestBitmap = capturedTestBitmap,
                         selectedExposureSeconds = selectedExposureSeconds,
+                        captureIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds),
                         isDropdownExpanded = isDropdownExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
@@ -704,11 +671,20 @@ private fun MainAppContent() {
                 MainMenuTab.INTERVAL -> {
                     IntervalTabContent(
                         isIntervalActive = isIntervalShootingActive,
+                        isCamera2BurstActive = isCamera2BurstActive,
+                        camera2BurstStatus = camera2BurstStatus,
                         shotCount = shotCount,
                         remainingShots = remainingShots,
                         elapsedSeconds = elapsedSeconds,
                         selectedExposureSeconds = selectedExposureSeconds,
+                        captureIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds),
                         onTriggerShutter = onTriggerShutter,
+                        onStartCamera2Burst = {
+                            if (!isIntervalShootingActive && !isCamera2BurstActive) {
+                                isCamera2BurstActive = true
+                                isCamera2BurstTestRequested = true
+                            }
+                        },
                         onCameraBound = { camera, imageCapture ->
                             cameraInstance = camera
                             imageCaptureInstance = imageCapture
@@ -819,9 +795,11 @@ private fun PortraitCropGuidesOverlay(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SetupTabContent(
+    isCamera2BurstActive: Boolean,
     currentStep: WorkflowStep,
     capturedTestBitmap: Bitmap?,
     selectedExposureSeconds: Double,
+    captureIso: Int,
     isDropdownExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
@@ -831,7 +809,22 @@ private fun SetupTabContent(
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
+        if (isCamera2BurstActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = statusMessage,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(24.dp)
+                )
+            }
+        } else if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
             Image(
                 bitmap = capturedTestBitmap.asImageBitmap(),
                 contentDescription = "試写結果",
@@ -841,6 +834,8 @@ private fun SetupTabContent(
         } else {
             CameraPreview(
                 modifier = Modifier.fillMaxSize(),
+                exposureTimeNs = (selectedExposureSeconds * 1_000_000_000.0).toLong(),
+                iso = captureIso,
                 onCameraBound = onCameraBound
             )
             PortraitCropGuidesOverlay()
@@ -967,6 +962,7 @@ private fun SetupTabContent(
         ) {
             Button(
                 onClick = onShutterClick,
+                enabled = !isCamera2BurstActive,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
@@ -1005,19 +1001,42 @@ private fun SetupTabContent(
 @Composable
 private fun IntervalTabContent(
     isIntervalActive: Boolean,
+    isCamera2BurstActive: Boolean,
+    camera2BurstStatus: String,
     shotCount: Int,
     remainingShots: Int,
     elapsedSeconds: Int,
     selectedExposureSeconds: Double,
+    captureIso: Int,
     onTriggerShutter: () -> Unit,
+    onStartCamera2Burst: () -> Unit,
     onCameraBound: (Camera, ImageCapture) -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        CameraPreview(
-            modifier = Modifier.fillMaxSize(),
-            onCameraBound = onCameraBound
-        )
-        PortraitCropGuidesOverlay()
+        if (isCamera2BurstActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = camera2BurstStatus,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(24.dp)
+                )
+            }
+        } else {
+            CameraPreview(
+                modifier = Modifier.fillMaxSize(),
+                exposureTimeNs = (selectedExposureSeconds * 1_000_000_000.0).toLong(),
+                iso = captureIso,
+                onCameraBound = onCameraBound
+            )
+            PortraitCropGuidesOverlay()
+        }
 
         // ヘッダー（2行目：撮影数の右に経過秒数を追加）
         Column(
@@ -1065,6 +1084,21 @@ private fun IntervalTabContent(
                     textAlign = TextAlign.End
                 )
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = onStartCamera2Burst,
+                enabled = !isIntervalActive && !isCamera2BurstActive,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Camera2連写テスト（${Camera2BurstSession.MAX_BATCH_FRAMES}枚）")
+            }
+            if (camera2BurstStatus.isNotEmpty() && !isCamera2BurstActive) {
+                Text(
+                    text = camera2BurstStatus,
+                    color = Color.White,
+                    fontSize = 11.sp
+                )
+            }
         }
 
         // シャッターボタン（停止マーク対応）
@@ -1077,6 +1111,7 @@ private fun IntervalTabContent(
         ) {
             Button(
                 onClick = onTriggerShutter,
+                enabled = isIntervalActive || !isCamera2BurstActive,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(

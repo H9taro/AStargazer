@@ -77,6 +77,10 @@ object StorageHelper {
         return File(dir, "dark_frame.png")
     }
 
+    fun getDarkFrameCaptureTempFile(context: Context): File {
+        return File(context.cacheDir, "dark_frame_capture_${System.currentTimeMillis()}.jpg")
+    }
+
     /**
      * 保存されているダークフレームファイルが存在し、かつ指定された露出時間と一致するかチェックする
      */
@@ -104,6 +108,16 @@ object StorageHelper {
         val dir = getPublicAStargazerDir("Interval")
         val timestamp = System.currentTimeMillis()
         return File(dir, "IMG_%04d_%d.png".format(Locale.JAPAN, index, timestamp))
+    }
+
+    fun createCamera2BurstImageFile(index: Int, burstId: Long): File {
+        val dir = getPublicAStargazerDir("Camera2Burst")
+        return File(dir, "BURST_${burstId}_%02d.jpg".format(Locale.US, index))
+    }
+
+    fun createIntervalJpegFile(index: Int): File {
+        val dir = getPublicAStargazerDir("Interval")
+        return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, System.currentTimeMillis()))
     }
 
     /**
