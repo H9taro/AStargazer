@@ -51,8 +51,7 @@ class Camera2BurstSession private constructor(
     private val requestedExposureNs: Long,
     private val requestedIso: Int,
     private val sensorOrientation: Int,
-    private val location: android.location.Location?,
-    private val testOutput: Boolean
+    private val location: android.location.Location?
 ) : AutoCloseable {
     private class BatchState(
         val count: Int,
@@ -117,8 +116,7 @@ class Camera2BurstSession private constructor(
             context: Context,
             exposureSeconds: Double,
             iso: Int,
-            location: android.location.Location? = null,
-            testOutput: Boolean = false
+            location: android.location.Location? = null
         ): Camera2BurstSession = withContext(Dispatchers.IO) {
             val openStartTime = System.currentTimeMillis()
             Log.i("Camera2Perf", "Camera2BurstSession.open開始")
@@ -182,8 +180,7 @@ class Camera2BurstSession private constructor(
                     requestedExposureNs = requestedExposureNs,
                     requestedIso = actualRequestIso,
                     sensorOrientation = characteristics[CameraCharacteristics.SENSOR_ORIENTATION] ?: 0,
-                    location = location,
-                    testOutput = testOutput
+                    location = location
                 ).also { s ->
                     s.jpegSize = jpegSize
                     imageReader.setOnImageAvailableListener(s::onImageAvailable, cameraHandler)
@@ -260,7 +257,6 @@ class Camera2BurstSession private constructor(
 
     private val fileWriterScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val isClosed = AtomicBoolean(false)
-    private val burstId = System.currentTimeMillis()
     private var jpegSize = android.util.Size(0, 0)
     private var nextFrameIndex = 1
 
@@ -386,17 +382,13 @@ class Camera2BurstSession private constructor(
         }
     }
 
-    suspend fun captureBatch(frameCount: Int): List<Camera2CapturedFrame> {
-        val startTime = System.currentTimeMillis()
-        Log.i("Camera2Perf", "captureBatch開始")
-        try {
-            val frames = captureBatchInternal(frameCount) { frameIndex ->
-                if (testOutput) {
-                    StorageHelper.createCamera2BurstImageFile(frameIndex, burstId)
-                } else {
+        suspend fun captureBatch(frameCount: Int): List<Camera2CapturedFrame> {
+            val startTime = System.currentTimeMillis()
+            Log.i("Camera2Perf", "captureBatch開始")
+            try {
+                val frames = captureBatchInternal(frameCount) { frameIndex ->
                     StorageHelper.createIntervalJpegFile(frameIndex)
                 }
-            }
             val duration = System.currentTimeMillis() - startTime
             Log.i("Camera2Perf", "captureBatch終了")
             Log.i("Camera2Perf", "captureBatch=$duration ms")

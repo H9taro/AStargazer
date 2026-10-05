@@ -30,19 +30,10 @@ object StorageHelper {
     /**
      * 利用可能な空きストレージ容量をバイト単位で取得
      */
-    fun getAvailableStorageBytes(context: Context): Long {
+    fun getAvailableStorageBytes(): Long {
         val path = getPublicAStargazerDir()
         val stat = StatFs(path.path)
         return stat.availableBlocksLong * stat.blockSizeLong
-    }
-
-    /**
-     * 人間が読みやすい形式 (例: "12.5 GB") で空き容量文字列を取得
-     */
-    fun getFormattedAvailableStorage(context: Context): String {
-        val bytes = getAvailableStorageBytes(context)
-        val gb = bytes / (1024.0 * 1024.0 * 1024.0)
-        return String.format(Locale.JAPAN, "%.2f GB", gb)
     }
 
     /**
@@ -52,13 +43,6 @@ object StorageHelper {
         val availableForShooting = currentStorageBytes - minAllowedStorageBytes
         if (availableForShooting <= 0) return 0
         return (availableForShooting / ESTIMATED_BYTES_PER_FRAME).toInt()
-    }
-
-    /**
-     * 空き容量が 1GB (1,073,741,824 bytes) 以上あるかチェック
-     */
-    fun hasSufficientStorage(context: Context, minRequiredBytes: Long = 1_073_741_824L): Boolean {
-        return getAvailableStorageBytes(context) > minRequiredBytes
     }
 
     /**
@@ -72,7 +56,7 @@ object StorageHelper {
     /**
      * ダークフレーム保存用ファイルの取得 (非圧縮 PNG)
      */
-    fun getDarkFrameFile(context: Context? = null): File {
+    fun getDarkFrameFile(): File {
         val dir = getPublicAStargazerDir("DarkFrame")
         return File(dir, "dark_frame.png")
     }
@@ -84,8 +68,8 @@ object StorageHelper {
     /**
      * 保存されているダークフレームファイルが存在し、かつ指定された露出時間と一致するかチェックする
      */
-    fun hasValidDarkFrame(context: Context?, exposureSeconds: Double): Boolean {
-        val darkFile = getDarkFrameFile(context)
+    fun hasValidDarkFrame(exposureSeconds: Double): Boolean {
+        val darkFile = getDarkFrameFile()
         if (!darkFile.exists()) return false
 
         try {
@@ -101,20 +85,6 @@ object StorageHelper {
         return false
     }
 
-    /**
-     * インターバル撮影写真の保存先ファイルの生成 (非圧縮 PNG)
-     */
-    fun createIntervalImageFile(context: Context? = null, index: Int): File {
-        val dir = getPublicAStargazerDir("Interval")
-        val timestamp = System.currentTimeMillis()
-        return File(dir, "IMG_%04d_%d.png".format(Locale.JAPAN, index, timestamp))
-    }
-
-    fun createCamera2BurstImageFile(index: Int, burstId: Long): File {
-        val dir = getPublicAStargazerDir("Camera2Burst")
-        return File(dir, "BURST_${burstId}_%02d.jpg".format(Locale.US, index))
-    }
-
     fun createIntervalJpegFile(index: Int): File {
         val dir = getPublicAStargazerDir("Interval")
         return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, System.currentTimeMillis()))
@@ -123,7 +93,7 @@ object StorageHelper {
     /**
      * 比較明合成（Lighten Blend）静止画の保存先ファイル (出力は標準高画質 JPEG)
      */
-    fun getCompositeImageFile(context: Context? = null): File {
+    fun getCompositeImageFile(): File {
         val dir = getPublicAStargazerDir("Export")
         return File(dir, "Composite_StarTrails_${System.currentTimeMillis()}.jpg")
     }
@@ -131,7 +101,7 @@ object StorageHelper {
     /**
      * タイムラプス動画（*.mp4）の保存先ファイル (パブリック Movies/AStargazer/Export/)
      */
-    fun getTimelapseVideoFile(context: Context? = null): File {
+    fun getTimelapseVideoFile(): File {
         val publicMovies = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
         val dir = File(publicMovies, "AStargazer/Export")
         if (!dir.exists()) dir.mkdirs()
@@ -142,7 +112,7 @@ object StorageHelper {
      * 保存済みのインターバル撮影写真ファイルの一覧を取得 (非圧縮 PNG 対象)
      * (※ ゴミ箱ファイル .trashed- や ドット隠しファイルは除外)
      */
-    fun getIntervalImageFiles(context: Context? = null): List<File> {
+    fun getIntervalImageFiles(): List<File> {
         val dir = getPublicAStargazerDir("Interval")
         if (!dir.exists()) return emptyList()
 

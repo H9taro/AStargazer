@@ -76,14 +76,14 @@ import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.LocationHelper
 import com.example.astargazer.util.StorageHelper
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.FileOutputStream
 import java.util.Locale
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * 露出時間の選択肢（秒数: 0.25秒, 0.5秒, 1秒, 2秒, 4秒, 8秒, 15秒, 30秒）
@@ -220,14 +220,13 @@ private fun MainAppContent() {
     var isIntervalCompleted by remember { mutableStateOf(false) }
 
     // 前回の撮影画像ファイルがストレージに残っているかどうか
-    val hasExistingIntervalFiles = remember { StorageHelper.getIntervalImageFiles(context).isNotEmpty() }
+    val hasExistingIntervalFiles = remember { StorageHelper.getIntervalImageFiles().isNotEmpty() }
 
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
 
     var isIntervalShootingActive by remember { mutableStateOf(false) }
     var isCamera2BurstActive by remember { mutableStateOf(false) }
-    var isCamera2BurstTestRequested by remember { mutableStateOf(false) }
     var camera2BurstStatus by remember { mutableStateOf("") }
     var shotCount by remember { mutableIntStateOf(0) }
     var remainingShots by remember { mutableIntStateOf(0) }
@@ -253,35 +252,9 @@ private fun MainAppContent() {
         }
     }
 
-    LaunchedEffect(isCamera2BurstTestRequested) {
-        if (isCamera2BurstTestRequested) {
-            camera2BurstStatus = "CameraXを解放してCamera2連写を準備中..."
-            delay(500.milliseconds)
-            var session: Camera2BurstSession? = null
-            try {
-                val iso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
-                session = Camera2BurstSession.open(
-                    context = context,
-                    exposureSeconds = selectedExposureSeconds,
-                    iso = iso,
-                    testOutput = true
-                )
-                val frames = session.captureBatch(Camera2BurstSession.MAX_BATCH_FRAMES)
-                camera2BurstStatus = "連写完了: ${frames.size}枚をPictures/AStargazer/Camera2Burstに保存しました"
-            } catch (exception: Exception) {
-                camera2BurstStatus = "連写失敗: ${exception.message ?: "原因不明"}"
-                Log.e("Camera2Burst", "Burst prototype failed", exception)
-            } finally {
-                session?.close()
-                isCamera2BurstActive = false
-                isCamera2BurstTestRequested = false
-            }
-        }
-    }
-
     // 露出時間が変更されたとき、すでに同じ秒数のダークフレームがあれば案内メッセージに反映
     LaunchedEffect(selectedExposureSeconds) {
-        statusMessage = if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+        statusMessage = if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds)) {
             "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: 既存のダークフレームが利用可能です。そのままシャッターを押して北極星合わせへ進むか、露出時間を再選択できます。"
         } else {
             "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: レンズを覆ってシャッターを押してください（ダーク撮影）。"
@@ -298,7 +271,7 @@ private fun MainAppContent() {
         currentStep = WorkflowStep.DARK_FRAME_NOTICE
         capturedTestBitmap = null
 
-        statusMessage = if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+        statusMessage = if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds)) {
             "設定をリセットしました。露出時間を再選択するか、シャッターを押して進んでください（既存ダーク流用可）。"
         } else {
             "設定をリセットしました。露出時間を再選択し、レンズを覆ってシャッターを押してください。"
@@ -308,7 +281,7 @@ private fun MainAppContent() {
 
     // インターバル撮影ループ
     fun startIntervalShootingLoop() {
-        val initialStorageBytes = StorageHelper.getAvailableStorageBytes(context)
+        val initialStorageBytes = StorageHelper.getAvailableStorageBytes()
         val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
         var currentRemainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
 
@@ -385,7 +358,7 @@ private fun MainAppContent() {
                 MainMenuTab.SETUP -> {
                     when (currentStep) {
                         WorkflowStep.DARK_FRAME_NOTICE -> {
-                            if (StorageHelper.hasValidDarkFrame(context, selectedExposureSeconds)) {
+                            if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds)) {
                                 currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
                                 statusMessage = "既存のダークフレームを流用します。北極星を合わせてシャッターを押してください。"
                             } else {
@@ -419,7 +392,7 @@ private fun MainAppContent() {
         val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(exposureSeconds)
         val exposureTimeNs = (exposureSeconds * 1_000_000_000.0).toLong()
         val currentLocation = LocationHelper.getLastKnownLocation(context)
-        val darkFrameFile = StorageHelper.getDarkFrameFile(context)
+        val darkFrameFile = StorageHelper.getDarkFrameFile()
         val tempJpegFile = StorageHelper.getDarkFrameCaptureTempFile(context)
         isProcessing = true
         isCamera2BurstActive = true
@@ -495,15 +468,14 @@ private fun MainAppContent() {
                     context = context,
                     exposureSeconds = selectedExposureSeconds,
                     iso = optimalIso,
-                    location = currentLocation,
-                    testOutput = true
+                    location = currentLocation
                 )
                 val frame = session.captureBatch(1).single()
                 val bitmap = withContext(Dispatchers.IO) {
                     BitmapFactory.decodeFile(frame.file.absolutePath)
                 } ?: error("Camera2試写画像をBitmapに変換できませんでした")
 
-                val darkFile = StorageHelper.getDarkFrameFile(context)
+                val darkFile = StorageHelper.getDarkFrameFile()
                 val finalBitmap = if (darkFile.exists()) {
                     val darkBmp = withContext(Dispatchers.IO) {
                         BitmapFactory.decodeFile(darkFile.absolutePath)

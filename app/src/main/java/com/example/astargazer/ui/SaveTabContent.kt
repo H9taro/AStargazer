@@ -100,7 +100,7 @@ fun SaveTabContent(
     context: Context,
     coroutineScope: kotlinx.coroutines.CoroutineScope
 ) {
-    val intervalFiles = remember { StorageHelper.getIntervalImageFiles(context) }
+    val intervalFiles = remember { StorageHelper.getIntervalImageFiles() }
     var selectedMode by remember { mutableStateOf(ExportMode.FULLHD_TIMELAPSE) }
 
     // プレビュー表示する画像コマのインデックス
@@ -168,12 +168,12 @@ fun SaveTabContent(
         statusMessage = "${selectedMode.label} を生成中..."
 
         coroutineScope.launch(Dispatchers.IO) {
-            val darkFrameFile = StorageHelper.getDarkFrameFile(context)
+            val darkFrameFile = StorageHelper.getDarkFrameFile()
             val success: Boolean
             val outputFile: File
 
             if (selectedMode.isTimelapse) {
-                outputFile = StorageHelper.getTimelapseVideoFile(context)
+                outputFile = StorageHelper.getTimelapseVideoFile()
                 success = VideoEncoderHelper.createTimelapseVideo(
                     imageFiles = intervalFiles,
                     outputFile = outputFile,
@@ -183,7 +183,7 @@ fun SaveTabContent(
                     onProgress = { p -> progress = p }
                 )
             } else {
-                outputFile = StorageHelper.getCompositeImageFile(context)
+                outputFile = StorageHelper.getCompositeImageFile()
                 success = ImageCompositor.createLightenBlendComposite(
                     imageFiles = intervalFiles,
                     outputFile = outputFile,
