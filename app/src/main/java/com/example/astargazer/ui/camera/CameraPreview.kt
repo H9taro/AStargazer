@@ -1,5 +1,7 @@
 package com.example.astargazer.ui.camera
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
@@ -30,9 +32,10 @@ fun CameraPreview(
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         val executor = ContextCompat.getMainExecutor(context)
 
-        cameraProviderFuture.addListener({
+        val bindCamera: () -> Unit = {
             try {
                 val cameraProvider = cameraProviderFuture.get()
+                cameraProvider.unbindAll()
 
                 val preview = Preview.Builder().build().also {
                     it.surfaceProvider = previewView.surfaceProvider
@@ -40,7 +43,6 @@ fun CameraPreview(
 
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-                cameraProvider.unbindAll()
                 Log.i("Camera2Perf", "Preview bind start")
                 cameraProvider.bindToLifecycle(
                     lifecycleOwner,
@@ -49,9 +51,28 @@ fun CameraPreview(
                 )
                 Log.i("Camera2Perf", "Preview bind complete")
             } catch (e: Exception) {
-                Log.e("CameraPreview", "Camera binding failed", e)
+                Log.e("CameraPreview", "Camera binding failed, retrying in 500ms...", e)
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        val cameraProvider = cameraProviderFuture.get()
+                        cameraProvider.unbindAll()
+                        val preview = Preview.Builder().build().also {
+                            it.surfaceProvider = previewView.surfaceProvider
+                        }
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            CameraSelector.DEFAULT_BACK_CAMERA,
+                            preview
+                        )
+                        Log.i("Camera2Perf", "Preview bind retry complete")
+                    } catch (retryEx: Exception) {
+                        Log.e("CameraPreview", "Camera binding retry failed", retryEx)
+                    }
+                }, 500)
             }
-        }, executor)
+        }
+
+        cameraProviderFuture.addListener(bindCamera, executor)
 
         onDispose {
             try {

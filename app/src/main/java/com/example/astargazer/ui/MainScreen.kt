@@ -11,6 +11,7 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -52,6 +53,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +63,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -72,7 +75,6 @@ import com.example.astargazer.ui.camera.CameraControlManager
 import com.example.astargazer.ui.camera.CameraPreview
 import com.example.astargazer.util.Camera2BurstSession
 import com.example.astargazer.util.FileViewerHelper
-import com.example.astargazer.util.ImageCompositor
 import com.example.astargazer.util.ImageContrastAnalyzer
 import com.example.astargazer.util.LocationHelper
 import com.example.astargazer.util.StorageHelper
@@ -129,8 +131,14 @@ fun MainScreen() {
     // パーミッション状態 (カメラ & 位置情報)
     var hasPermissions by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
         )
     }
 
@@ -232,13 +240,19 @@ private fun MainAppContent() {
     var remainingShots by remember { mutableIntStateOf(0) }
     var elapsedSeconds by remember { mutableIntStateOf(0) }
 
-    var currentStep by remember { mutableStateOf(WorkflowStep.DARK_FRAME_NOTICE) }
+    var currentStep by remember { mutableStateOf(WorkflowStep.POLARIS_ALIGNMENT_NOTICE) }
 
     var selectedExposureSeconds by remember { mutableDoubleStateOf(4.0) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
 
+    var isTestShootingInterrupted by remember { mutableStateOf(false) }
+    var activeTestSession by remember { mutableStateOf<Camera2BurstSession?>(null) }
+    var multiTestResults by remember { mutableStateOf<List<Pair<Int, Bitmap>>>(emptyList()) }
+    var selectedTestIso by remember { mutableIntStateOf(400) }
+
+
     var statusMessage by remember {
-        mutableStateOf("露出時間を選択し、レンズを覆ってシャッターを押してください（ダーク撮影）。")
+        mutableStateOf("露出時間を選択し、北極星を合わせてシャッターを押してください。")
     }
 
     // インターバル撮影中の経過時間タイマー
@@ -254,10 +268,12 @@ private fun MainAppContent() {
 
     // 露出時間が変更されたとき、すでに同じ秒数のダークフレームがあれば案内メッセージに反映
     LaunchedEffect(selectedExposureSeconds) {
-        statusMessage = if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds)) {
+        val optimalIso =
+            CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+        statusMessage = if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds, optimalIso)) {
             "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: 既存のダークフレームが利用可能です。そのままシャッターを押して北極星合わせへ進むか、露出時間を再選択できます。"
         } else {
-            "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: レンズを覆ってシャッターを押してください（ダーク撮影）。"
+            "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: 北極星を合わせ、シャッターを押して試写を開始してください。"
         }
     }
 
@@ -268,13 +284,15 @@ private fun MainAppContent() {
         isIntervalCompleted = false
         isIntervalShootingActive = false
         elapsedSeconds = 0
-        currentStep = WorkflowStep.DARK_FRAME_NOTICE
+        currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
         capturedTestBitmap = null
 
-        statusMessage = if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds)) {
+        val optimalIso =
+            CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+        statusMessage = if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds, optimalIso)) {
             "設定をリセットしました。露出時間を再選択するか、シャッターを押して進んでください（既存ダーク流用可）。"
         } else {
-            "設定をリセットしました。露出時間を再選択し、レンズを覆ってシャッターを押してください。"
+            "設定をリセットしました。露出時間を再選択し、北極星を合わせてシャッターを押してください。"
         }
         selectedTab = MainMenuTab.SETUP
     }
@@ -283,9 +301,11 @@ private fun MainAppContent() {
     fun startIntervalShootingLoop() {
         val initialStorageBytes = StorageHelper.getAvailableStorageBytes()
         val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
-        var currentRemainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
+        var currentRemainingShots =
+            StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
 
-        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+        val optimalIso =
+            CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
         // インターバル開始時にGPS位置情報を1回だけ取得
         val baseLocation = LocationHelper.getLastKnownLocation(context)
         val exposureSeconds = selectedExposureSeconds
@@ -297,7 +317,10 @@ private fun MainAppContent() {
         elapsedSeconds = 0
         remainingShots = currentRemainingShots
 
-        Log.i("IntervalPerf", ">>> START INTERVAL LOOP (Exposure: ${exposureSeconds}s, ISO: $optimalIso) <<<")
+        Log.i(
+            "IntervalPerf",
+            ">>> START INTERVAL LOOP (Exposure: ${exposureSeconds}s, ISO: $optimalIso) <<<"
+        )
 
         coroutineScope.launch {
             var session: Camera2BurstSession? = null
@@ -345,58 +368,68 @@ private fun MainAppContent() {
                 isIntervalShootingActive = false
                 isCamera2BurstActive = false
             }
-            Log.i("IntervalPerf", ">>> STOP INTERVAL SHOOTING LOOP (Total captured: $shotCount frames) <<<")
+            Log.i(
+                "IntervalPerf",
+                ">>> STOP INTERVAL SHOOTING LOOP (Total captured: $shotCount frames) <<<"
+            )
         }
     }
 
-    // シャッターボタン押下アクション（撮影中・処理中にももう一度押すとキャンセル）
-    val onTriggerShutter: () -> Unit = {
-        if (isProcessing) {
-            cancelSetup()
-        } else {
-            when (selectedTab) {
-                MainMenuTab.SETUP -> {
-                    when (currentStep) {
-                        WorkflowStep.DARK_FRAME_NOTICE -> {
-                            if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds)) {
-                                currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
-                                statusMessage = "既存のダークフレームを流用します。北極星を合わせてシャッターを押してください。"
-                            } else {
-                                currentStep = WorkflowStep.DARK_FRAME_SHOOTING
-                            }
-                        }
-                        WorkflowStep.DARK_FRAME_SHOOTING -> {}
-                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
-                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {}
-                        WorkflowStep.TEST_RESULT_DISPLAY -> currentStep = WorkflowStep.SETUP_COMPLETED
-                        WorkflowStep.SETUP_COMPLETED -> currentStep = WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+    fun finalizeSetup(targetIso: Int) {
+        isProcessing = true
+        statusMessage = "設定を保存中..."
+        coroutineScope.launch {
+            try {
+                val bitmap = capturedTestBitmap ?: error("試写画像がありません")
+                val finalBitmap = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
+
+                val testFile = StorageHelper.getTestShootingFile()
+                withContext(Dispatchers.IO) {
+                    FileOutputStream(testFile).use { out ->
+                        finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
                     }
+                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
+                        file = testFile,
+                        iso = targetIso,
+                        exposureSeconds = selectedExposureSeconds
+                    )
+                    FileViewerHelper.scanFile(context, testFile)
                 }
-                MainMenuTab.INTERVAL -> {
-                    if (isIntervalShootingActive) {
-                        isIntervalShootingActive = false
-                        camera2BurstStatus = "停止要求を受け付けました。撮影中のコマを保存して停止します。"
-                        if (shotCount > 0) isIntervalCompleted = true
-                    } else {
-                        startIntervalShootingLoop()
-                    }
+
+                val score = withContext(Dispatchers.Default) {
+                    ImageContrastAnalyzer.calculateContrastScore(finalBitmap)
                 }
-                MainMenuTab.SAVE -> {}
+                val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
+                capturedTestBitmap = finalBitmap
+
+                delay(600.milliseconds)
+
+                statusMessage = "試写完了 (スコア: $scoreFormatted, ISO: $targetIso)。設定完了！"
+                currentStep = WorkflowStep.SETUP_COMPLETED
+                isSetupCompleted = true
+                isCamera2BurstActive = false
+                selectedTab = MainMenuTab.INTERVAL
+            } catch (exception: Exception) {
+                Log.e("MainScreen", "Setup completion failed", exception)
+                statusMessage = "設定完了エラー: ${exception.message}"
+            } finally {
+                isProcessing = false
             }
         }
     }
 
     // ダークフレーム撮影実行（GPS情報付与）
     fun runDarkFrameShooting() {
+        val targetIso = selectedTestIso
         val exposureSeconds = selectedExposureSeconds
-        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(exposureSeconds)
         val exposureTimeNs = (exposureSeconds * 1_000_000_000.0).toLong()
         val currentLocation = LocationHelper.getLastKnownLocation(context)
-        val darkFrameFile = StorageHelper.getDarkFrameFile()
+        val darkFrameFile = StorageHelper.getDarkFrameFile(exposureSeconds, targetIso)
         val tempJpegFile = StorageHelper.getDarkFrameCaptureTempFile(context)
         isProcessing = true
         isCamera2BurstActive = true
-        statusMessage = "Camera2でダークフレーム撮影中 (${formatExposureSeconds(exposureSeconds)})..."
+        statusMessage =
+            "レンズを覆ってください。ダークフレーム撮影中 (${formatExposureSeconds(exposureSeconds)}, ISO: $targetIso)..."
 
         coroutineScope.launch {
             var session: Camera2BurstSession? = null
@@ -405,12 +438,14 @@ private fun MainAppContent() {
                 session = Camera2BurstSession.open(
                     context = context,
                     exposureSeconds = exposureSeconds,
-                    iso = optimalIso,
+                    iso = targetIso,
                     location = currentLocation
                 )
+                activeTestSession = session
                 val frame = session.captureSingleFrame(tempJpegFile)
                 session.close()
                 session = null
+                activeTestSession = null
 
                 withContext(Dispatchers.IO) {
                     val bitmap = BitmapFactory.decodeFile(tempJpegFile.absolutePath)
@@ -427,105 +462,224 @@ private fun MainAppContent() {
 
                     com.example.astargazer.util.ExifHelper.saveExifAttributes(
                         file = darkFrameFile,
-                        iso = frame.iso ?: optimalIso,
+                        iso = frame.iso ?: targetIso,
                         exposureSeconds =
-                            (frame.exposureTimeNs ?: exposureTimeNs) / 1_000_000_000.0,
-                        location = currentLocation
+                            (frame.exposureTimeNs ?: exposureTimeNs) / 1_000_000_000.0
                     )
                 }
                 tempJpegFile.delete()
                 FileViewerHelper.scanFile(context, darkFrameFile)
 
-                statusMessage = "ダークフレーム撮影完了。レンズカバーを外し、星空に向けてシャッターを押してください。"
-                currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                statusMessage = "ダークフレーム撮影完了。レンズカバーを外してください。"
+                delay(300.milliseconds)
+                finalizeSetup(targetIso)
             } catch (exception: Exception) {
                 Log.e("MainScreen", "Dark frame capture failed", exception)
                 statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
-            } finally {
-                session?.close()
-                tempJpegFile.delete()
                 isProcessing = false
                 isCamera2BurstActive = false
+            } finally {
+                session?.close()
+                activeTestSession = null
             }
         }
     }
 
-    // 試写と自動調整（1秒待機で手ブレ防止、最大画質 ＆ ノイズ減算適用 ＆ GPS情報付与）
-    fun runTestShootingAndAutoAdjust() {
-        val optimalIso = CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+    // シャッターボタン押下アクション（撮影中・処理中にももう一度押すとキャンセル、試写・ダーク撮影中は中断/キャンセル）
+    val onTriggerShutter: () -> Unit = {
+        if (isProcessing) {
+            if (currentStep == WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST) {
+                isTestShootingInterrupted = true
+                activeTestSession?.close()
+                activeTestSession = null
+                statusMessage = "試写を中断しました。撮影できた画像から選択してください。"
+            } else if (currentStep == WorkflowStep.DARK_FRAME_SHOOTING) {
+                activeTestSession?.close()
+                activeTestSession = null
+                isProcessing = false
+                isCamera2BurstActive = false
+                currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                statusMessage = "ダークフレーム撮影をキャンセルしました。再度試写を行ってください。"
+            } else {
+                cancelSetup()
+            }
+        } else {
+            when (selectedTab) {
+                MainMenuTab.SETUP -> {
+                    when (currentStep) {
+                        WorkflowStep.DARK_FRAME_NOTICE -> {
+                            currentStep = WorkflowStep.DARK_FRAME_SHOOTING
+                        }
 
+                        WorkflowStep.DARK_FRAME_SHOOTING -> {
+                            activeTestSession?.close()
+                            activeTestSession = null
+                            isProcessing = false
+                            isCamera2BurstActive = false
+                            currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                            statusMessage =
+                                "ダークフレーム撮影をキャンセルしました。再度試写を行ってください。"
+                        }
+
+                        WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep =
+                            WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
+
+                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {
+                            isTestShootingInterrupted = true
+                            activeTestSession?.close()
+                            activeTestSession = null
+                            statusMessage = "試写を中断しました。撮影できた画像から選択してください。"
+                        }
+
+                        WorkflowStep.TEST_RESULT_DISPLAY -> {
+                            val targetIso = selectedTestIso
+                            if (StorageHelper.hasValidDarkFrame(
+                                    selectedExposureSeconds,
+                                    targetIso
+                                )
+                            ) {
+                                finalizeSetup(targetIso)
+                            } else {
+                                currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                                statusMessage =
+                                    "この露出・ISO($targetIso)のダークフレームがありません。\nカメラのレンズを覆ってから、シャッターを押してください。"
+                            }
+                        }
+
+                        WorkflowStep.SETUP_COMPLETED -> currentStep =
+                            WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                    }
+                }
+
+                MainMenuTab.INTERVAL -> {
+                    if (isIntervalShootingActive) {
+                        isIntervalShootingActive = false
+                        camera2BurstStatus =
+                            "停止要求を受け付けました。撮影中のコマを保存して停止します。"
+                        if (shotCount > 0) isIntervalCompleted = true
+                    } else {
+                        startIntervalShootingLoop()
+                    }
+                }
+
+                MainMenuTab.SAVE -> {}
+            }
+        }
+    }
+
+    // 試写と自動調整（3段階試写必須、途中中断対応）
+    fun runTestShootingAndAutoAdjust() {
+        val optimalIso =
+            CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
         isProcessing = true
         isCamera2BurstActive = true
-        statusMessage = "試写を実行中: 無限遠ピント & ISO($optimalIso)..."
+        isTestShootingInterrupted = false
+        statusMessage = "3段階のISO感度で試写を実行中...（シャッター押下で中断可能）"
 
         val currentLocation = LocationHelper.getLastKnownLocation(context)
 
         coroutineScope.launch {
-            var session: Camera2BurstSession? = null
             try {
                 delay(500.milliseconds)
-                session = Camera2BurstSession.open(
-                    context = context,
-                    exposureSeconds = selectedExposureSeconds,
-                    iso = optimalIso,
-                    location = currentLocation
-                )
-                val frame = session.captureBatch(1).single()
-                val bitmap = withContext(Dispatchers.IO) {
-                    BitmapFactory.decodeFile(frame.file.absolutePath)
-                } ?: error("Camera2試写画像をBitmapに変換できませんでした")
+                val cameraManager =
+                    context.getSystemService(android.hardware.camera2.CameraManager::class.java)
+                val cameraId = cameraManager?.cameraIdList?.firstOrNull { id ->
+                    cameraManager.getCameraCharacteristics(id)[android.hardware.camera2.CameraCharacteristics.LENS_FACING] ==
+                            android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK
+                } ?: cameraManager?.cameraIdList?.firstOrNull()
+                val characteristics = cameraId?.let { cameraManager?.getCameraCharacteristics(it) }
+                val sensitivityRange =
+                    characteristics?.get(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+                val minIso = sensitivityRange?.lower ?: 100
+                val maxIso = sensitivityRange?.upper ?: 6400
 
-                val darkFile = StorageHelper.getDarkFrameFile()
-                val finalBitmap = if (darkFile.exists()) {
-                    val darkBmp = withContext(Dispatchers.IO) {
-                        BitmapFactory.decodeFile(darkFile.absolutePath)
-                    }
-                    if (darkBmp != null) {
-                        val subtracted = withContext(Dispatchers.Default) {
-                            ImageCompositor.subtractDarkFrame(bitmap, darkBmp)
-                        }
-                        bitmap.recycle()
-                        darkBmp.recycle()
-                        subtracted
-                    } else {
-                        bitmap
-                    }
+                val mid = optimalIso.coerceIn(minIso, maxIso)
+                val low = maxOf(mid / 2, minIso)
+                val high = minOf(mid * 2, maxIso)
+
+                val list = mutableListOf<Int>()
+                if (low < mid && mid < high) {
+                    list.add(low)
+                    list.add(mid)
+                    list.add(high)
+                } else if (mid >= maxIso) {
+                    val step3 = maxOf(mid / 4, minIso)
+                    val step2 = maxOf(mid / 2, minIso)
+                    list.add(step3)
+                    list.add(step2)
+                    list.add(mid)
                 } else {
-                    bitmap
+                    val step2 = minOf(mid * 2, maxIso)
+                    val step3 = minOf(mid * 4, maxIso)
+                    list.add(mid)
+                    list.add(step2)
+                    list.add(step3)
                 }
+                val isos = list.distinct()
 
-                val testFile = StorageHelper.getTestShootingFile()
-                withContext(Dispatchers.IO) {
-                    FileOutputStream(testFile).use { out ->
-                        finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                val results = mutableListOf<Pair<Int, Bitmap>>()
+                for (iso in isos) {
+                    if (isTestShootingInterrupted) {
+                        Log.i("MainScreen", "Test shooting interrupted by user at ISO $iso")
+                        break
                     }
-                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
-                        file = testFile,
-                        iso = frame.iso ?: optimalIso,
-                        exposureSeconds = (frame.exposureTimeNs ?: 0L) / 1_000_000_000.0,
-                        location = currentLocation
-                    )
-                    FileViewerHelper.scanFile(context, testFile)
+                    var session: Camera2BurstSession? = null
+                    try {
+                        session = Camera2BurstSession.open(
+                            context = context,
+                            exposureSeconds = selectedExposureSeconds,
+                            iso = iso,
+                            location = currentLocation
+                        )
+                        activeTestSession = session
+                        if (isTestShootingInterrupted) {
+                            session.close()
+                            activeTestSession = null
+                            break
+                        }
+                        val frame = session.captureBatch(1).single()
+                        val bmp = withContext(Dispatchers.IO) {
+                            BitmapFactory.decodeFile(frame.file.absolutePath)
+                        } ?: continue
+                        results.add(iso to bmp)
+                    } catch (e: Exception) {
+                        if (isTestShootingInterrupted) {
+                            Log.i("MainScreen", "Test shooting capture aborted by user")
+                            break
+                        } else {
+                            throw e
+                        }
+                    } finally {
+                        session?.close()
+                        activeTestSession = null
+                    }
                 }
-                session.close()
-                session = null
 
-                val score = withContext(Dispatchers.Default) {
-                    ImageContrastAnalyzer.calculateContrastScore(finalBitmap)
+                if (results.isEmpty()) {
+                    if (isTestShootingInterrupted) {
+                        statusMessage = "試写を中断しました。撮影前設定に戻ります。"
+                        currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                        return@launch
+                    }
+                    error("試写画像を取得できませんでした")
                 }
-                val scoreFormatted = String.format(Locale.JAPAN, "%.1f", score)
-                capturedTestBitmap = finalBitmap
-                statusMessage = "試写調整完了 (スコア: $scoreFormatted, ノイズ減算済)。設定完了！"
-                currentStep = WorkflowStep.SETUP_COMPLETED
-                isSetupCompleted = true
-                selectedTab = MainMenuTab.INTERVAL
+
+                multiTestResults = results
+                val initialResult =
+                    results.firstOrNull { it.first == optimalIso } ?: results.first()
+                selectedTestIso = initialResult.first
+                capturedTestBitmap = initialResult.second
+
+                statusMessage =
+                    "試写完了（${results.size}枚）。左右スワイプで画像を切り替え、シャッターで確定します。"
+                currentStep = WorkflowStep.TEST_RESULT_DISPLAY
             } catch (exception: Exception) {
                 Log.e("MainScreen", "Test capture failed", exception)
                 statusMessage = "試写撮影エラー: ${exception.message}"
             } finally {
-                session?.close()
                 isProcessing = false
                 isCamera2BurstActive = false
+                activeTestSession = null
             }
         }
     }
@@ -612,6 +766,12 @@ private fun MainAppContent() {
                         isDropdownExpanded = isDropdownExpanded,
                         isProcessing = isProcessing,
                         statusMessage = statusMessage,
+                        multiTestResults = multiTestResults,
+                        selectedTestIso = selectedTestIso,
+                        onIsoSelect = { iso, bmp ->
+                            selectedTestIso = iso
+                            capturedTestBitmap = bmp
+                        },
                         onExposureChange = { selectedExposureSeconds = it },
                         onDropdownToggle = { isDropdownExpanded = it },
                         onShutterClick = onTriggerShutter
@@ -723,7 +883,12 @@ private fun PortraitCropGuidesOverlay(
                 .padding(top = 80.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(text = "📏 縦位置クロップガイド (4K / Full HD / HD)", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(
+                text = "📏 縦位置クロップガイド (4K / Full HD / HD)",
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
@@ -741,10 +906,15 @@ private fun SetupTabContent(
     isDropdownExpanded: Boolean,
     isProcessing: Boolean,
     statusMessage: String,
+    multiTestResults: List<Pair<Int, Bitmap>>,
+    selectedTestIso: Int,
+    onIsoSelect: (Int, Bitmap) -> Unit,
     onExposureChange: (Double) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
     onShutterClick: () -> Unit
 ) {
+    val latestSelectedTestIso = rememberUpdatedState(selectedTestIso)
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (isCamera2BurstActive) {
             Box(
@@ -762,12 +932,64 @@ private fun SetupTabContent(
                 )
             }
         } else if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
-            Image(
-                bitmap = capturedTestBitmap.asImageBitmap(),
-                contentDescription = "試写結果",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(multiTestResults) {
+                        var totalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onHorizontalDrag = { change, dragAmount ->
+                                totalDrag += dragAmount
+                                change.consume()
+                            },
+                            onDragEnd = {
+                                if (multiTestResults.size > 1 &&
+                                    (totalDrag > 60f || totalDrag < -60f)
+                                ) {
+                                    val currentIndex = multiTestResults
+                                        .indexOfFirst { it.first == latestSelectedTestIso.value }
+                                        .coerceAtLeast(0)
+                                    val nextIndex = if (totalDrag > 0f) {
+                                        (currentIndex - 1 + multiTestResults.size) % multiTestResults.size
+                                    } else {
+                                        (currentIndex + 1) % multiTestResults.size
+                                    }
+                                    val (iso, bmp) = multiTestResults[nextIndex]
+                                    onIsoSelect(iso, bmp)
+                                }
+                            },
+                            onDragCancel = { totalDrag = 0f }
+                        )
+                    }
+            ) {
+                Image(
+                    bitmap = capturedTestBitmap.asImageBitmap(),
+                    contentDescription = "試写結果",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+
+                if (multiTestResults.size > 1) {
+                    val currentIndex = multiTestResults.indexOfFirst { it.first == selectedTestIso }
+                        .let { if (it < 0) 0 else it }
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 75.dp)
+                    ) {
+                        Text(
+                            text = "ISO: $selectedTestIso (${currentIndex + 1}/${multiTestResults.size})",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
         } else {
             CameraPreview(
                 modifier = Modifier.fillMaxSize()
@@ -775,7 +997,7 @@ private fun SetupTabContent(
             PortraitCropGuidesOverlay()
         }
 
-        // ヘッダーレイアウト（ステータス表示: 撮影前設定）
+        // ヘッダーレイアウト（ステータス表示: 撮影前設定 ＆ 露出時間選択）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -795,7 +1017,8 @@ private fun SetupTabContent(
                     fontWeight = FontWeight.Bold
                 )
 
-                val isChangeable = currentStep == WorkflowStep.DARK_FRAME_NOTICE || currentStep == WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                val isChangeable =
+                    currentStep == WorkflowStep.DARK_FRAME_NOTICE || currentStep == WorkflowStep.POLARIS_ALIGNMENT_NOTICE
 
                 ExposedDropdownMenuBox(
                     expanded = isDropdownExpanded && isChangeable,
@@ -825,7 +1048,7 @@ private fun SetupTabContent(
                         ),
                         modifier = Modifier
                             .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                            .width(135.dp)
+                            .width(125.dp)
                     )
 
                     ExposedDropdownMenu(
@@ -834,7 +1057,12 @@ private fun SetupTabContent(
                     ) {
                         EXPOSURE_TIMES_SECONDS.forEach { seconds ->
                             DropdownMenuItem(
-                                text = { Text(formatExposureSeconds(seconds), color = Color.White) },
+                                text = {
+                                    Text(
+                                        formatExposureSeconds(seconds),
+                                        color = Color.White
+                                    )
+                                },
                                 onClick = {
                                     onExposureChange(seconds)
                                     onDropdownToggle(false)
@@ -857,7 +1085,7 @@ private fun SetupTabContent(
                     CircularProgressIndicator(color = Color(0xFF1E88E5))
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = if (currentStep == WorkflowStep.DARK_FRAME_SHOOTING) "ダークフレーム撮影中..." else "試写・ノイズ減算処理中...",
+                        text = statusMessage,
                         color = Color.White,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium
@@ -896,7 +1124,7 @@ private fun SetupTabContent(
         ) {
             Button(
                 onClick = onShutterClick,
-                enabled = !isCamera2BurstActive,
+                enabled = !isCamera2BurstActive || currentStep == WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST || currentStep == WorkflowStep.DARK_FRAME_SHOOTING,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(

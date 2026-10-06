@@ -54,11 +54,16 @@ object StorageHelper {
     }
 
     /**
-     * ダークフレーム保存用ファイルの取得 (非圧縮 PNG)
+     * ダークフレーム保存用ファイルの取得 (指定された露出時間とISOに応じた個別ファイル名)
      */
-    fun getDarkFrameFile(): File {
+    fun getDarkFrameFile(exposureSeconds: Double? = null, iso: Int? = null): File {
         val dir = getPublicAStargazerDir("DarkFrame")
-        return File(dir, "dark_frame.png")
+        val filename = if (exposureSeconds != null && iso != null) {
+            "dark_exp_${String.format(Locale.US, "%.1f", exposureSeconds)}s_iso_${iso}.png"
+        } else {
+            "dark_frame.png"
+        }
+        return File(dir, filename)
     }
 
     fun getDarkFrameCaptureTempFile(context: Context): File {
@@ -66,22 +71,46 @@ object StorageHelper {
     }
 
     /**
-     * 保存されているダークフレームファイルが存在し、かつ指定された露出時間と一致するかチェックする
+     * 指定された露出時間とISO感度に一致する有効なダークフレームが存在するかチェックする
      */
-    fun hasValidDarkFrame(exposureSeconds: Double): Boolean {
-        val darkFile = getDarkFrameFile()
-        if (!darkFile.exists()) return false
-
-        try {
-            val exif = ExifInterface(darkFile.absolutePath)
-            val exposureTimeStr = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)
-            if (exposureTimeStr != null) {
-                val savedExposure = exposureTimeStr.toDoubleOrNull() ?: 0.0
-                return kotlin.math.abs(savedExposure - exposureSeconds) < 0.01
+    fun hasValidDarkFrame(exposureSeconds: Double, iso: Int): Boolean {
+        val darkFile = getDarkFrameFile(exposureSeconds, iso)
+        if (darkFile.exists()) {
+            try {
+                val exif = ExifInterface(darkFile.absolutePath)
+                val exposureTimeStr = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)
+                val isoStr = exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)
+                if (exposureTimeStr != null) {
+                    val savedExposure = exposureTimeStr.toDoubleOrNull() ?: 0.0
+                    val savedIso = isoStr?.toIntOrNull() ?: iso
+                    if (kotlin.math.abs(savedExposure - exposureSeconds) < 0.01 && savedIso == iso) {
+                        return true
+                    }
+                } else {
+                    return true
+                }
+            } catch (e: Exception) {
+                Log.e("StorageHelper", "Failed to read dark frame exif", e)
+                return true
             }
-        } catch (e: Exception) {
-            Log.e("StorageHelper", "Failed to read dark frame exif", e)
         }
+
+        // レガシーファイルフォールバック
+        val legacyFile = File(getPublicAStargazerDir("DarkFrame"), "dark_frame.png")
+        if (legacyFile.exists()) {
+            try {
+                val exif = ExifInterface(legacyFile.absolutePath)
+                val exposureTimeStr = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)
+                if (exposureTimeStr != null) {
+                    val savedExposure = exposureTimeStr.toDoubleOrNull() ?: 0.0
+                    return kotlin.math.abs(savedExposure - exposureSeconds) < 0.01
+                }
+                return true
+            } catch (_: Exception) {
+                return true
+            }
+        }
+
         return false
     }
 
