@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -24,6 +25,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -100,7 +102,7 @@ fun SaveTabContent(
     context: Context,
     coroutineScope: kotlinx.coroutines.CoroutineScope
 ) {
-    val intervalFiles = remember { StorageHelper.getIntervalImageFiles() }
+    var intervalFiles by remember { mutableStateOf(StorageHelper.getIntervalImageFiles()) }
     var selectedMode by remember { mutableStateOf(ExportMode.FULLHD_TIMELAPSE) }
 
     // プレビュー表示する画像コマのインデックス
@@ -159,6 +161,23 @@ fun SaveTabContent(
 
     var totalDragX by remember { mutableFloatStateOf(0f) }
     var totalDragY by remember { mutableFloatStateOf(0f) }
+
+    // すべてのインターバル画像を削除
+    fun clearAllImages() {
+        coroutineScope.launch(Dispatchers.IO) {
+            val success = StorageHelper.clearIntervalImages()
+            val updatedFiles = StorageHelper.getIntervalImageFiles()
+            withContext(Dispatchers.Main) {
+                intervalFiles = updatedFiles
+                currentImageIndex = 0
+                statusMessage = if (success && updatedFiles.isEmpty()) {
+                    "インターバル撮影画像をすべて削除しました。"
+                } else {
+                    "一部の画像の削除に失敗しました。"
+                }
+            }
+        }
+    }
 
     // 保存処理の実行
     fun executeExport() {
@@ -391,6 +410,29 @@ fun SaveTabContent(
                     text = if (selectedMode.isTimelapse) "🎬 ${selectedMode.label} を出力" else "🌌 ${selectedMode.label} を出力",
                     color = Color.White,
                     fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // クリアボタン
+            OutlinedButton(
+                onClick = { clearAllImages() },
+                enabled = !isGenerating && intervalFiles.isNotEmpty(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = Color(0xFFFF5252)
+                ),
+                border = BorderStroke(1.dp, Color(0xFFFF5252)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = "🗑️ 撮影済み画像をすべてクリア（削除）",
+                    color = Color(0xFFFF5252),
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
             }

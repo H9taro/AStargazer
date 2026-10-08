@@ -3,6 +3,9 @@ package com.example.astargazer.ui.camera
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -44,11 +47,13 @@ fun CameraPreview(
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
                 Log.i("Camera2Perf", "Preview bind start")
-                cameraProvider.bindToLifecycle(
+                val camera = cameraProvider.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
                     preview
                 )
+                // プレビューは撮影方向の確認（構図決め）目的なので、ピントは無限遠(0.0f)にしつつAEは自動(ON)で短時間露光・明るさを確保
+                applyPreviewFocus(camera)
                 Log.i("Camera2Perf", "Preview bind complete")
             } catch (e: Exception) {
                 Log.e("CameraPreview", "Camera binding failed, retrying in 500ms...", e)
@@ -59,11 +64,12 @@ fun CameraPreview(
                         val preview = Preview.Builder().build().also {
                             it.surfaceProvider = previewView.surfaceProvider
                         }
-                        cameraProvider.bindToLifecycle(
+                        val camera = cameraProvider.bindToLifecycle(
                             lifecycleOwner,
                             CameraSelector.DEFAULT_BACK_CAMERA,
                             preview
                         )
+                        applyPreviewFocus(camera)
                         Log.i("Camera2Perf", "Preview bind retry complete")
                     } catch (retryEx: Exception) {
                         Log.e("CameraPreview", "Camera binding retry failed", retryEx)
@@ -88,4 +94,12 @@ fun CameraPreview(
         factory = { previewView },
         modifier = modifier
     ) { _ -> }
+}
+
+@OptIn(ExperimentalCamera2Interop::class)
+private fun applyPreviewFocus(camera: Camera) {
+    CameraControlManager.setManualFocusOnly(
+        camera = camera,
+        focusDistance = 0.0f
+    )
 }

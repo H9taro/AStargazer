@@ -155,4 +155,18 @@ object StorageHelper {
                     (ext.equals("png", ignoreCase = true) || ext.equals("jpg", ignoreCase = true) || ext.equals("jpeg", ignoreCase = true))
         }?.sortedBy { it.name } ?: emptyList()
     }
+
+    /**
+     * 保存されているすべてのインターバル撮影写真ファイルを一括削除する
+     */
+    fun clearIntervalImages(): Boolean {
+        val files = getIntervalImageFiles()
+        var allDeleted = true
+        for (file in files) {
+            if (file.exists() && !file.delete()) {
+                allDeleted = false
+            }
+        }
+        return allDeleted
+    }
 }

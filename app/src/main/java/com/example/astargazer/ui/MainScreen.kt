@@ -31,7 +31,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -304,8 +303,7 @@ private fun MainAppContent() {
         var currentRemainingShots =
             StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
 
-        val optimalIso =
-            CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
+        val optimalIso = selectedTestIso
         // インターバル開始時にGPS位置情報を1回だけ取得
         val baseLocation = LocationHelper.getLastKnownLocation(context)
         val exposureSeconds = selectedExposureSeconds
@@ -580,7 +578,6 @@ private fun MainAppContent() {
 
         coroutineScope.launch {
             try {
-                delay(500.milliseconds)
                 val cameraManager =
                     context.getSystemService(android.hardware.camera2.CameraManager::class.java)
                 val cameraId = cameraManager?.cameraIdList?.firstOrNull { id ->
@@ -1070,26 +1067,6 @@ private fun SetupTabContent(
                             )
                         }
                     }
-                }
-            }
-        }
-
-        if (isProcessing) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = Color(0xFF1E88E5))
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = statusMessage,
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium
-                    )
                 }
             }
         }
