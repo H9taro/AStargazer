@@ -382,13 +382,16 @@ class Camera2BurstSession private constructor(
         }
     }
 
-        suspend fun captureBatch(frameCount: Int): List<Camera2CapturedFrame> {
-            val startTime = System.currentTimeMillis()
-            Log.i("Camera2Perf", "captureBatch開始")
-            try {
-                val frames = captureBatchInternal(frameCount) { frameIndex ->
-                    StorageHelper.createIntervalJpegFile(frameIndex)
-                }
+    suspend fun captureBatch(
+        frameCount: Int,
+        outputFileProvider: ((Int) -> File)? = null
+    ): List<Camera2CapturedFrame> {
+        val startTime = System.currentTimeMillis()
+        Log.i("Camera2Perf", "captureBatch開始")
+        try {
+            val frames = captureBatchInternal(frameCount) { frameIndex ->
+                outputFileProvider?.invoke(frameIndex) ?: StorageHelper.createIntervalJpegFile(frameIndex)
+            }
             val duration = System.currentTimeMillis() - startTime
             Log.i("Camera2Perf", "captureBatch終了")
             Log.i("Camera2Perf", "captureBatch=$duration ms")

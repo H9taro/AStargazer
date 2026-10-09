@@ -53,6 +53,11 @@ object StorageHelper {
         return File(dir, "Test_${System.currentTimeMillis()}.png")
     }
 
+    fun getTestShootingFile(iso: Int): File {
+        val dir = getPublicAStargazerDir("TestShooting")
+        return File(dir, "Test_ISO_${iso}_${System.currentTimeMillis()}.jpg")
+    }
+
     /**
      * ダークフレーム保存用ファイルの取得 (指定された露出時間とISOに応じた個別ファイル名)
      */

@@ -381,19 +381,6 @@ private fun MainAppContent() {
                 val bitmap = capturedTestBitmap ?: error("試写画像がありません")
                 val finalBitmap = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, true)
 
-                val testFile = StorageHelper.getTestShootingFile()
-                withContext(Dispatchers.IO) {
-                    FileOutputStream(testFile).use { out ->
-                        finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                    }
-                    com.example.astargazer.util.ExifHelper.saveExifAttributes(
-                        file = testFile,
-                        iso = targetIso,
-                        exposureSeconds = selectedExposureSeconds
-                    )
-                    FileViewerHelper.scanFile(context, testFile)
-                }
-
                 val score = withContext(Dispatchers.Default) {
                     ImageContrastAnalyzer.calculateContrastScore(finalBitmap)
                 }
@@ -634,11 +621,13 @@ private fun MainAppContent() {
                             activeTestSession = null
                             break
                         }
-                        val frame = session.captureBatch(1).single()
+                        val testFile = StorageHelper.getTestShootingFile(iso)
+                        session.captureBatch(1) { testFile }.single()
                         val bmp = withContext(Dispatchers.IO) {
-                            BitmapFactory.decodeFile(frame.file.absolutePath)
+                            BitmapFactory.decodeFile(testFile.absolutePath)
                         } ?: continue
                         results.add(iso to bmp)
+                        FileViewerHelper.scanFile(context, testFile)
                     } catch (e: Exception) {
                         if (isTestShootingInterrupted) {
                             Log.i("MainScreen", "Test shooting capture aborted by user")
