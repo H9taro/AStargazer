@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.astargazer"
+    namespace = "jp.hisanet.astargazer"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.example.astargazer"
+        applicationId = "jp.hisanet.astargazer"
         minSdk = 30
         targetSdk = 37
         versionCode = 1
