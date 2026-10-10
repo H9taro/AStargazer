@@ -45,14 +45,6 @@ object StorageHelper {
         return (availableForShooting / ESTIMATED_BYTES_PER_FRAME).toInt()
     }
 
-    /**
-     * 試写調整画像の保存先ファイル (非圧縮 PNG)
-     */
-    fun getTestShootingFile(): File {
-        val dir = getPublicAStargazerDir("TestShooting")
-        return File(dir, "Test_${System.currentTimeMillis()}.png")
-    }
-
     fun getTestShootingFile(iso: Int): File {
         val dir = getPublicAStargazerDir("TestShooting")
         return File(dir, "Test_ISO_${iso}_${System.currentTimeMillis()}.jpg")

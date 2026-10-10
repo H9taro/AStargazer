@@ -216,7 +216,6 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
 }
 
 @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainAppContent() {
     val context = LocalContext.current
@@ -474,20 +473,24 @@ private fun MainAppContent() {
     // シャッターボタン押下アクション（撮影中・処理中にももう一度押すとキャンセル、試写・ダーク撮影中は中断/キャンセル）
     val onTriggerShutter: () -> Unit = {
         if (isProcessing) {
-            if (currentStep == WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST) {
-                isTestShootingInterrupted = true
-                activeTestSession?.close()
-                activeTestSession = null
-                statusMessage = "試写を中断しました。撮影できた画像から選択してください。"
-            } else if (currentStep == WorkflowStep.DARK_FRAME_SHOOTING) {
-                activeTestSession?.close()
-                activeTestSession = null
-                isProcessing = false
-                isCamera2BurstActive = false
-                currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
-                statusMessage = "ダークフレーム撮影をキャンセルしました。再度試写を行ってください。"
-            } else {
-                cancelSetup()
+            when (currentStep) {
+                WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {
+                    isTestShootingInterrupted = true
+                    activeTestSession?.close()
+                    activeTestSession = null
+                    statusMessage = "試写を中断しました。撮影できた画像から選択してください。"
+                }
+                WorkflowStep.DARK_FRAME_SHOOTING -> {
+                    activeTestSession?.close()
+                    activeTestSession = null
+                    isProcessing = false
+                    isCamera2BurstActive = false
+                    currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+                    statusMessage = "ダークフレーム撮影をキャンセルしました。再度試写を行ってください。"
+                }
+                else -> {
+                    cancelSetup()
+                }
             }
         } else {
             when (selectedTab) {
@@ -583,7 +586,7 @@ private fun MainAppContent() {
                 val high = minOf(mid * 2, maxIso)
 
                 val list = mutableListOf<Int>()
-                if (low < mid && mid < high) {
+                if (mid in (low + 1)..<high) {
                     list.add(low)
                     list.add(mid)
                     list.add(high)

@@ -11,6 +11,8 @@ import android.graphics.Typeface
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
+import androidx.core.graphics.scale
+import androidx.core.graphics.createBitmap
 
 object ImageCompositor {
 
@@ -24,12 +26,12 @@ object ImageCompositor {
         val height = src.height
 
         val scaledDark = if (dark.width != width || dark.height != height) {
-            Bitmap.createScaledBitmap(dark, width, height, true)
+            dark.scale(width, height)
         } else {
             dark
         }
 
-        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val result = createBitmap(width, height)
         val srcPixels = IntArray(width * height)
         val darkPixels = IntArray(width * height)
         val resultPixels = IntArray(width * height)
@@ -105,7 +107,7 @@ object ImageCompositor {
             val height = firstSubtracted.height
 
             // 合成結果を保持するミュータブルな Bitmap
-            val resultBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val resultBitmap = createBitmap(width, height)
             val canvas = Canvas(resultBitmap)
             canvas.drawBitmap(firstSubtracted, 0f, 0f, null)
             firstSubtracted.recycle()
@@ -123,7 +125,7 @@ object ImageCompositor {
 
                 // サイズが異なる場合はスケール調整
                 val scaledFrame = if (frameSubtracted.width != width || frameSubtracted.height != height) {
-                    val scaled = Bitmap.createScaledBitmap(frameSubtracted, width, height, true)
+                    val scaled = frameSubtracted.scale(width, height)
                     if (scaled != frameSubtracted) frameSubtracted.recycle()
                     scaled
                 } else {

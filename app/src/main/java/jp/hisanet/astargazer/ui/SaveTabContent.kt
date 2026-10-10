@@ -232,12 +232,12 @@ fun SaveTabContent(
                     onDragStart = { totalDragX = 0f },
                     onDragEnd = {
                         if (abs(totalDragX) > 60f && intervalFiles.isNotEmpty() && !isGenerating) {
-                            if (totalDragX > 0f) {
+                            currentImageIndex = if (totalDragX > 0f) {
                                 // 右スワイプ: 前のコマ
-                                currentImageIndex = if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
+                                if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
                             } else {
                                 // 左スワイプ: 次のコマ
-                                currentImageIndex = if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
+                                if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
                             }
                         }
                     },
@@ -252,12 +252,12 @@ fun SaveTabContent(
                     onDragStart = { totalDragY = 0f },
                     onDragEnd = {
                         if (abs(totalDragY) > 60f && !isGenerating) {
-                            if (totalDragY > 0f) {
+                            selectedMode = if (totalDragY > 0f) {
                                 // 下スワイプ: 前のモード
-                                selectedMode = selectedMode.prev()
+                                selectedMode.prev()
                             } else {
                                 // 上スワイプ: 次のモード
-                                selectedMode = selectedMode.next()
+                                selectedMode.next()
                             }
                         }
                     },

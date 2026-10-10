@@ -19,7 +19,7 @@ object VideoEncoderHelper {
 
     /**
      * 静止画ファイル群から選択された解像度（HD, Full HD, 4K）の9:16クロップを適用して MP4 タイムラプス動画を生成する
-     * テレビ等の視聴用に、縦位置画像を時計回りに90度回転させて横長（ランドスケープ）動画として出力する
+     * テレビ等の視聴用に、縦位置画像を反時計回りにに90度回転させて横長（ランドスケープ）動画として出力する
      * 左下に「解像度 - 撮影日時」、右下にアプリ名 "AStargazer" のテロップを正確な位置に焼き込む
      */
     fun createTimelapseVideo(
@@ -102,7 +102,7 @@ object VideoEncoderHelper {
             val frameDurationUs = 1_000_000L / frameRate
 
             val dstRect = Rect(0, 0, targetWidth, targetHeight)
-            val rotateMatrix = Matrix().apply { postRotate(90f) } // 時計回り90度回転
+            val rotateMatrix = Matrix().apply { postRotate(270f) } // 反時計回りに90度回転
 
             for ((index, file) in imageFiles.withIndex()) {
                 val rawBitmap = BitmapFactory.decodeFile(file.absolutePath) ?: continue
