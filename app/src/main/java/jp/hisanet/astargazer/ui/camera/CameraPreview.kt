@@ -52,8 +52,9 @@ fun CameraPreview(
                     cameraSelector,
                     preview
                 )
-                // プレビューは撮影方向の確認（構図決め）目的なので、ピントは無限遠(0.0f)にしつつAEは自動(ON)で短時間露光・明るさを確保
-                applyPreviewFocus(camera)
+                // ライブプレビュー表示は撮影条件とは完全に分離し、星の視認性を最大化する (0.5秒露光 & 最大ISO & 無限遠)
+                val usedMaxIso = applyStarVisibilitySettings(camera)
+                Log.i("CameraPreview", "CameraPreview applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=1.0s, Focus=0.0f")
                 Log.i("Camera2Perf", "Preview bind complete")
             } catch (e: Exception) {
                 Log.e("CameraPreview", "Camera binding failed, retrying in 500ms...", e)
@@ -69,7 +70,8 @@ fun CameraPreview(
                             CameraSelector.DEFAULT_BACK_CAMERA,
                             preview
                         )
-                        applyPreviewFocus(camera)
+                        val usedMaxIso = applyStarVisibilitySettings(camera)
+                        Log.i("CameraPreview", "CameraPreview retry applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=1.0s, Focus=0.0f")
                         Log.i("Camera2Perf", "Preview bind retry complete")
                     } catch (retryEx: Exception) {
                         Log.e("CameraPreview", "Camera binding retry failed", retryEx)
@@ -97,9 +99,6 @@ fun CameraPreview(
 }
 
 @OptIn(ExperimentalCamera2Interop::class)
-private fun applyPreviewFocus(camera: Camera) {
-    CameraControlManager.setManualFocusOnly(
-        camera = camera,
-        focusDistance = 0.0f
-    )
+private fun applyStarVisibilitySettings(camera: Camera): Int {
+    return CameraControlManager.setPreviewStarVisibilityParams(camera)
 }
