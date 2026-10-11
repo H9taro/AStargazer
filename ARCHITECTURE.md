@@ -101,3 +101,65 @@ Movies/AStargazer/Export/
 ```
 
 撮影画像には撮影日時、ISO、露出時間、カメラ情報、利用可能な場合は GPS 情報を EXIF として記録する（試写画像・ダークフレーム画像からは位置情報を除外）。ファイルの読み書き、一覧取得、生成処理はそれぞれ UI からユーティリティを直接呼び出す。
+
+## サブカメラ（超広角カメラ等）の非公開制限と端末互換性知見
+
+特定の端末（AQUOS sense8 等）において、実機検証（`dumpsys media.camera` および `Logcat`）により判明したサブカメラアクセスの制約事項をここに記録する。
+
+### 調査結果と実機ログの事実
+
+AQUOS sense8 (SH-M26) において `CameraManager.getCameraIdList()` を呼び出した場合、取得可能なカメラ ID は `["0", "1"]`（0 = 背面メイン, 1 = 前面イン）の2個に制限される。
+
+1. **OS カメラサービスダンプ (`dumpsys media.camera`)**:
+   ```text
+   Number of camera devices: 4
+   Number of normal camera devices: 2
+   Number of public camera devices visible to API1/2: 2
+       Device 0 maps to "0"
+       Device 1 maps to "1"
+   ```
+   ハードウェアセンサーとしては 4 個存在するが、OS（CameraService）レベルで公開カメラ（Public Camera Devices）が **2 個**に固定制御されている。
+
+2. **Logcat システム警告 (`CameraManagerGlobal`)**:
+   ```text
+   W/libc: Access denied finding property "vendor.camera.aux.packagelist"
+   W/CameraManagerGlobal: [soar.cts] ignore the status update of camera: 2
+   W/CameraManagerGlobal: [soar.cts] ignore the status update of camera: 3
+   ```
+   `CameraManagerGlobal` Native 層において、カメラ ID 2（超広角）および 3 のステータスが更新された際、ベンダーアクセス制御プロパティ `vendor.camera.aux.packagelist` に含まれない一般サードパーティアプリに対しては、サブカメラ ID が無視（`ignore`）され非公開化される。
+
+### ベンダー制限メカニズム (`vendor.camera.aux.packagelist`)
+
+- SHARP (AQUOS) や Sony (Xperia) 等の Qualcomm SoC 搭載 OEM 端末では、ベンダー独自のアクセスポリシープロパティ（`vendor.camera.aux.packagelist`）にホワイトリスト登録された公式カメラアプリ（`jp.co.sharp.android.camera` 等）以外の一般サードパーティアプリ（Open Camera, Camera FV-5, mcpro24fps, AStargazer 等）に対し、サブカメラ ID（`2` 以降）へのアクセスを OS/HAL レベルで遮断する仕様となっている。
+- `vendor.camera.aux.packagelist` はシステム保護プロパティであり、非 Root アプリケーション権限からの変更・バイパスは不可能である。
+- したがって、AQUOS sense8 等の端末では、標準 Camera2 / CameraX API を使用するサードパーティ製アプリから超広角カメラへアクセスすることはできない。
+
+## 設計判断履歴
+
+### サブカメラ選択機能
+
+2026年10月検討。
+
+AQUOS sense8実機調査により
+
+- CameraManager.cameraIdList = ["0","1"]
+- Open Cameraでも超広角取得不可
+- Camera FV-5でも取得不可
+- mcpro24fpsでも取得不可
+- CameraManagerGlobal が cameraId 2,3 を ignore
+- vendor.camera.aux.packagelist による OEM 制限あり
+
+であることを確認。
+
+そのため
+
+「メインカメラ / 超広角カメラ選択機能」
+
+は実装対象外とする。
+
+将来再検討する場合は
+
+Camera2 APIで実機取得可能であることを
+先に確認すること。
+
+UI追加や enum 追加を先行しないこと。
