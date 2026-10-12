@@ -251,7 +251,7 @@ private fun MainAppContent() {
 
 
     var statusMessage by remember {
-        mutableStateOf("露出時間を選択し、北極星を合わせてシャッターを押してください。")
+        mutableStateOf("")
     }
 
     // インターバル撮影中の経過時間タイマー
@@ -265,17 +265,6 @@ private fun MainAppContent() {
         }
     }
 
-    // 露出時間が変更されたとき、すでに同じ秒数のダークフレームがあれば案内メッセージに反映
-    LaunchedEffect(selectedExposureSeconds) {
-        val optimalIso =
-            CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
-        statusMessage = if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds, optimalIso)) {
-            "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: 既存のダークフレームが利用可能です。そのままシャッターを押して北極星合わせへ進むか、露出時間を再選択できます。"
-        } else {
-            "露出時間 ${formatExposureSeconds(selectedExposureSeconds)}: 北極星を合わせ、シャッターを押して試写を開始してください。"
-        }
-    }
-
     // 設定キャンセル・リセット
     fun cancelSetup() {
         isProcessing = false
@@ -286,13 +275,7 @@ private fun MainAppContent() {
         currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
         capturedTestBitmap = null
 
-        val optimalIso =
-            CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
-        statusMessage = if (StorageHelper.hasValidDarkFrame(selectedExposureSeconds, optimalIso)) {
-            "設定をリセットしました。露出時間を再選択するか、シャッターを押して進んでください（既存ダーク流用可）。"
-        } else {
-            "設定をリセットしました。露出時間を再選択し、北極星を合わせてシャッターを押してください。"
-        }
+        statusMessage = ""
         selectedTab = MainMenuTab.SETUP
     }
 
@@ -1064,24 +1047,26 @@ private fun SetupTabContent(
             }
         }
 
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 120.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Text(
-                text = statusMessage,
-                color = Color.White,
-                fontSize = 15.sp,
-                textAlign = TextAlign.Center,
+        if (currentStep != WorkflowStep.POLARIS_ALIGNMENT_NOTICE && statusMessage.isNotEmpty()) {
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
-            )
+                    .padding(horizontal = 24.dp)
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 120.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = statusMessage,
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                )
+            }
         }
 
         // シャッターボタン
