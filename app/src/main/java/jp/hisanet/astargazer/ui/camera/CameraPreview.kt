@@ -52,7 +52,7 @@ fun CameraPreview(
                     cameraSelector,
                     preview
                 )
-                // ライブプレビュー表示は撮影条件とは完全に分離し、星の視認性を最大化する (0.5秒露光 & 最大ISO & 無限遠)
+                // ライブプレビュー表示は撮影条件とは完全に分離し、星の視認性を最大化する (0.25秒露光 & 最大ISO & 無限遠)
                 val usedMaxIso = applyStarVisibilitySettings(camera)
                 Log.i("CameraPreview", "CameraPreview applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=1.0s, Focus=0.0f")
                 Log.i("Camera2Perf", "Preview bind complete")

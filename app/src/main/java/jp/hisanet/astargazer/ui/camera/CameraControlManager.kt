@@ -34,7 +34,7 @@ object CameraControlManager {
     /**
      * ライブプレビュー専用設定（撮影条件とは完全に分離し、星の視認性を最大化する）:
      * - ISO: カメラデバイスがサポートする最大ISO感度 (SENSOR_INFO_SENSITIVITY_RANGE.upper)
-     * - 露出時間: 0.5秒固定 (500_000_000L ナノ秒)
+     * - 露出時間: 0.25秒固定 (250_000_000L ナノ秒)
      * - AF: OFF (CONTROL_AF_MODE_OFF)
      * - フォーカス: 無限遠 (LENS_FOCUS_DISTANCE = 0.0f)
      *
@@ -49,7 +49,7 @@ object CameraControlManager {
             CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE
         )
         val maxIso = sensitivityRange?.upper ?: 3200
-        val fixedExposureNs = 500_000_000L // 0.5秒固定
+        val fixedExposureNs = 250_000_000L // 0.25秒固定
 
         val optionsBuilder = CaptureRequestOptions.Builder()
             // AF OFF & 無限遠 (0.0f)

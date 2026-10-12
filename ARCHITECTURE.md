@@ -51,7 +51,7 @@ Android launcher
 | `app/src/main/java/jp/hisanet/astargazer/MainActivity.kt` | アプリ起動、Edge-to-edge 設定、Compose コンテンツ設定 |
 | `app/src/main/java/jp/hisanet/astargazer/ui/MainScreen.kt` | 権限ゲート、タブ切替、Compose 状態、撮影手順・撮影処理の制御 |
 | `app/src/main/java/jp/hisanet/astargazer/ui/SaveTabContent.kt` | 撮影画像プレビューと書き出し UI、画像クリア |
-| `app/src/main/java/jp/hisanet/astargazer/ui/camera/CameraPreview.kt` | CameraX のプレビューをライフサイクルへバインド（無限遠ピント・AE保持） |
+| `app/src/main/java/jp/hisanet/astargazer/ui/camera/CameraPreview.kt` | CameraX のプレビューをライフサイクルへバインド（無限遠ピント・露出時間・感度固定） |
 | `app/src/main/java/jp/hisanet/astargazer/ui/camera/CameraControlManager.kt` | 露出時間に応じた ISO 算出、Camera2 interop を介した撮影制御ヘルパー |
 | `app/src/main/java/jp/hisanet/astargazer/util/Camera2BurstSession.kt` | Camera2 の JPEG セッション、連続撮影、画像・撮影結果の保存 |
 | `app/src/main/java/jp/hisanet/astargazer/util/StorageHelper.kt` | 撮影・書き出しファイルの配置、一覧、空き容量、複数ISOダークフレーム確認・一括削除 |
@@ -74,7 +74,7 @@ Android launcher
   3. 選択された露出時間・ISO感度に一致するダークフレームがすでに存在する場合は自動流用する。存在しない場合のみ案内ステップ（`DARK_FRAME_NOTICE`）を経てレンズを覆って撮影し、`dark_exp_{露出秒数}s_iso_{ISO感度}.png` として保存する。
   4. 試写画像自体に対するダークフレーム減算は行わず、そのままテスト画像（`TestShooting/`）として保存され、セットアップが完了する。
 - **カメラAPIの役割とライフサイクル**:
-  - CameraX はプレビュー専用で、静止画取得には使用しない。プレビューは `CameraPreview` が `ProcessCameraProvider` を使って画面のライフサイクルへバインドする（無限遠ピント `0.0f`・AE自動調整）。
+  - CameraX はプレビュー専用で、静止画取得には使用しない。プレビューは `CameraPreview` が `ProcessCameraProvider` を使って画面のライフサイクルへバインドする（無限遠ピント `0.0f`・露出時間・感度固定）。
   - 試写、ダークフレーム撮影、インターバル撮影はすべて `Camera2BurstSession` が `CameraManager`、`CameraDevice`、`CameraCaptureSession`、`ImageReader` を直接使用する。単発撮影には `captureSingleFrame()`、連続インターバル撮影には `startRepeatingCapture()` を使う。
   - Camera2セッションを開く前にCameraXのユースケースを `unbindAll()` で解放する。Camera2セッションを閉じて撮影中状態を解除した後、画面がプレビュー状態になればCameraXのプレビューを再バインドする。
 

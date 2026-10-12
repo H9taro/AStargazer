@@ -53,7 +53,7 @@ dependencies {
     implementation(libs.androidx.camera.view)
 
     // ExifInterface
-    implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
