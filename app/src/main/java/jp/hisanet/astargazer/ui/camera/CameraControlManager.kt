@@ -24,10 +24,10 @@ object CameraControlManager {
             exposureSeconds <= 1.0 -> 3200
             exposureSeconds <= 2.0 -> 3200
             exposureSeconds <= 4.0 -> 1600
-            exposureSeconds <= 8.0 -> 800
-            exposureSeconds <= 15.0 -> 800
-            exposureSeconds <= 30.0 -> 400
-            else -> 200
+            exposureSeconds <= 8.0 -> 1600
+            exposureSeconds <= 15.0 -> 1600
+            exposureSeconds <= 30.0 -> 1600
+            else -> 800
         }
     }
 

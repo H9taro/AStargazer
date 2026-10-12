@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -71,7 +72,7 @@ object ImageCompositor {
      * 複数枚の静止画ファイル群から比較明合成 (Lighten Blend) 画像を生成する
      * Android の Canvas および PorterDuff.Mode.LIGHTEN を用いてメモリ効率良く高速に合成する
      * ダークフレーム画像が存在する場合は自動的にダーク減算処理を実行する
-     * 左下に「開始日時 ~ 終了日時」、右下にアプリ名 "AStargazer" のテロップを1段小さいフォントで焼き込む
+     * 撮影画像を270度回転（タイムラプス動画と同じ向き）し、長辺下側の左下に「開始日時 ~ 終了日時」、右下にアプリ名 "AStargazer" のテロップを焼き込む
      *
      * @param imageFiles ソース画像ファイルリスト
      * @param outputFile 出力先 JPEG ファイル
@@ -141,12 +142,26 @@ object ImageCompositor {
 
             darkBitmap?.recycle()
 
-            // テロップ（ウォーターマーク）の焼き込み
-            val bmpWidth = resultBitmap.width
-            val bmpHeight = resultBitmap.height
+            // タイムラプス動画と同じ向きに270度回転（縦位置画像を横長動画向きに変換）
+            val rotateMatrix = Matrix().apply { postRotate(270f) }
+            val rotatedBitmap = Bitmap.createBitmap(
+                resultBitmap,
+                0, 0,
+                resultBitmap.width, resultBitmap.height,
+                rotateMatrix,
+                true
+            )
+            if (resultBitmap != rotatedBitmap) {
+                resultBitmap.recycle()
+            }
 
-            // フォントサイズを1段小さく調整 (1/45f -> 1/60f)
-            val textSize = (bmpHeight.toFloat() / 60f).coerceAtLeast(28f)
+            // テロップ（ウォーターマーク）の焼き込み（回転後の横長画像に対して長辺下側に配置）
+            val rotatedCanvas = Canvas(rotatedBitmap)
+            val bmpWidth = rotatedBitmap.width
+            val bmpHeight = rotatedBitmap.height
+
+            // フォントサイズを高さに対して適切に調整
+            val textSize = (bmpHeight.toFloat() / 45f).coerceAtLeast(28f)
             val padding = bmpWidth * 0.025f
 
             val textPaint = Paint().apply {
@@ -162,20 +177,20 @@ object ImageCompositor {
             val leftText = "$startDateTime ~ $endDateTime"
             val rightText = "AStargazer"
 
-            // 左下：開始日時 ~ 終了日時
+            // 左下：開始日時 ~ 終了日時（長辺下側）
             val leftY = bmpHeight - padding
-            canvas.drawText(leftText, padding, leftY, textPaint)
+            rotatedCanvas.drawText(leftText, padding, leftY, textPaint)
 
-            // 右下：アプリ名
+            // 右下：アプリ名（長辺下側）
             val rightTextWidth = textPaint.measureText(rightText)
             val rightX = (bmpWidth - rightTextWidth - padding).coerceAtLeast(padding)
-            canvas.drawText(rightText, rightX, leftY, textPaint)
+            rotatedCanvas.drawText(rightText, rightX, leftY, textPaint)
 
             FileOutputStream(outputFile).use { out ->
-                resultBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                rotatedBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
 
-            resultBitmap.recycle()
+            rotatedBitmap.recycle()
             Log.d("ImageCompositor", "Lighten blend composite (Canvas PorterDuff) created successfully at ${outputFile.absolutePath}")
             return true
         } catch (e: Exception) {

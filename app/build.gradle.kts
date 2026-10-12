@@ -53,6 +53,7 @@ dependencies {
     implementation(libs.androidx.camera.view)
 
     // ExifInterface
+    //noinspection UseTomlInstead
     implementation("androidx.exifinterface:exifinterface:1.4.2")
 
     testImplementation(libs.junit)

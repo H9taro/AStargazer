@@ -83,7 +83,7 @@ Android launcher
 `SaveTabContent` は `StorageHelper` からインターバル撮影画像を読み、プレビューと出力モードを表示する。重い生成処理は `Dispatchers.IO` 上で実行される。「クリア」ボタンで撮影済み画像の一括削除が可能。
 
 - HD / Full HD / 4K タイムラプス: `VideoEncoderHelper` が各画像にダークフレーム減算、クロップ、回転、文字入れを行い、Android `MediaCodec` で AVC をエンコード、`MediaMuxer` で MP4 にする。
-- 最高画質の比較明合成: `ImageCompositor` が画像をダークフレーム減算し、Canvas の `PorterDuff.Mode.LIGHTEN` で合成して JPEG を出力する。
+- 最高画質の比較明合成: `ImageCompositor` が画像をダークフレーム減算し、Canvas の `PorterDuff.Mode.LIGHTEN` で合成、270度回転（タイムラプス動画と同じ向き）および長辺下側へのテロップ焼き込みを行って JPEG を出力する。
 - 出力後は Media Scanner に登録し、Google Files または利用可能な一般ビューアで開く。
 
 ## ファイル保存とデータ
