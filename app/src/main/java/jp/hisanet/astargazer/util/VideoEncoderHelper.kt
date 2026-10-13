@@ -28,6 +28,8 @@ object VideoEncoderHelper {
         darkFrameFile: File? = null,
         resolutionLabel: String = "Full HD (1080p)",
         frameRate: Int = 30,
+        cropOffsetX: Float = 0.5f,
+        cropOffsetY: Float = 0.5f,
         onProgress: (Float) -> Unit = {}
     ): Boolean {
         if (imageFiles.isEmpty()) return false
@@ -114,8 +116,10 @@ object VideoEncoderHelper {
                 val srcHeight = subtractedBitmap.height
                 val cropHeight = (srcHeight * cropScale).toInt()
                 val cropWidth = (cropHeight * 9) / 16
-                val cropLeft = (srcWidth - cropWidth) / 2
-                val cropTop = (srcHeight - cropHeight) / 2
+                val maxLeft = (srcWidth - cropWidth).coerceAtLeast(0)
+                val maxTop = (srcHeight - cropHeight).coerceAtLeast(0)
+                val cropLeft = (maxLeft * cropOffsetX.coerceIn(0f, 1f)).toInt().coerceIn(0, maxLeft)
+                val cropTop = (maxTop * cropOffsetY.coerceIn(0f, 1f)).toInt().coerceIn(0, maxTop)
 
                 val croppedBitmap = Bitmap.createBitmap(
                     subtractedBitmap,

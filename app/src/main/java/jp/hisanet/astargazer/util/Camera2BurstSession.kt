@@ -51,7 +51,8 @@ class Camera2BurstSession private constructor(
     private val requestedExposureNs: Long,
     private val requestedIso: Int,
     private val sensorOrientation: Int,
-    private val location: android.location.Location?
+    private val location: android.location.Location?,
+    val sessionDir: File = StorageHelper.getNextIntervalSessionDir()
 ) : AutoCloseable {
     private class BatchState(
         val count: Int,
@@ -390,7 +391,7 @@ class Camera2BurstSession private constructor(
         Log.i("Camera2Perf", "captureBatch開始")
         try {
             val frames = captureBatchInternal(frameCount) { frameIndex ->
-                outputFileProvider?.invoke(frameIndex) ?: StorageHelper.createIntervalJpegFile(frameIndex)
+                outputFileProvider?.invoke(frameIndex) ?: StorageHelper.createIntervalJpegFile(frameIndex, sessionDir)
             }
             val duration = System.currentTimeMillis() - startTime
             Log.i("Camera2Perf", "captureBatch終了")
@@ -556,7 +557,7 @@ class Camera2BurstSession private constructor(
                     continue
                 }
                 image.close()
-                val outputFile = StorageHelper.createIntervalJpegFile(frameIndex)
+                val outputFile = StorageHelper.createIntervalJpegFile(frameIndex, sessionDir)
                 fileWriterScope.launch {
                     try {
                         withContext(Dispatchers.IO) {

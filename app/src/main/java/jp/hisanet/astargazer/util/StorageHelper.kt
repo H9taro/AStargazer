@@ -135,14 +135,51 @@ object StorageHelper {
     }
 
     /**
-     * 保存済みのインターバル撮影写真ファイルの一覧を取得 (非圧縮 PNG 対象)
-     * (※ ゴミ箱ファイル .trashed- や ドット隠しファイルは除外)
+     * 次のインターバル撮影セッション用ディレクトリ（例: Interval_001, Interval_002...）を新規作成して取得する
      */
-    fun getIntervalImageFiles(): List<File> {
-        val dir = getPublicAStargazerDir("Interval")
-        if (!dir.exists()) return emptyList()
+    fun getNextIntervalSessionDir(): File {
+        val parentDir = getPublicAStargazerDir()
+        val existingDirs = parentDir.listFiles { file -> file.isDirectory && file.name.startsWith("Interval_") }
+        var maxIndex = 0
+        existingDirs?.forEach { dir ->
+            val numStr = dir.name.removePrefix("Interval_")
+            val num = numStr.toIntOrNull()
+            if (num != null && num > maxIndex) {
+                maxIndex = num
+            }
+        }
+        val nextIndex = maxIndex + 1
+        val newDir = File(parentDir, "Interval_%03d".format(Locale.JAPAN, nextIndex))
+        if (!newDir.exists()) newDir.mkdirs()
+        return newDir
+    }
 
-        return dir.listFiles { file ->
+    /**
+     * 存在するすべてのインターバル撮影セッションディレクトリのリストを取得する（新しい順）
+     */
+    fun getIntervalSessions(): List<File> {
+        val parentDir = getPublicAStargazerDir()
+        val dirs = parentDir.listFiles { file -> file.isDirectory && file.name.startsWith("Interval_") }
+        // レガシー Interval フォルダもファイルが存在すれば疑似セッションとして扱う
+        val sessions = dirs?.sortedByDescending { it.name }?.toMutableList() ?: mutableListOf()
+        val legacyDir = File(parentDir, "Interval")
+        if (legacyDir.exists() && legacyDir.isDirectory) {
+            val hasFiles = legacyDir.listFiles()?.any { it.isFile && !it.isHidden } == true
+            if (hasFiles && !sessions.contains(legacyDir)) {
+                sessions.add(legacyDir)
+            }
+        }
+        return sessions
+    }
+
+    /**
+     * 保存済みのインターバル撮影写真ファイルの一覧を取得 (指定セッション、または最新セッション)
+     */
+    fun getIntervalImageFiles(sessionDir: File? = null): List<File> {
+        val targetDir = sessionDir ?: getIntervalSessions().firstOrNull() ?: getPublicAStargazerDir("Interval")
+        if (!targetDir.exists()) return emptyList()
+
+        return targetDir.listFiles { file ->
             val name = file.name
             val ext = file.extension
             file.isFile &&
@@ -153,16 +190,44 @@ object StorageHelper {
         }?.sortedBy { it.name } ?: emptyList()
     }
 
+    fun createIntervalJpegFile(index: Int, sessionDir: File? = null): File {
+        val dir = sessionDir ?: getNextIntervalSessionDir()
+        return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, System.currentTimeMillis()))
+    }
+
     /**
-     * 保存されているすべてのインターバル撮影写真ファイルを一括削除する
+     * 指定されたセッションディレクトリの画像を削除する
      */
-    fun clearIntervalImages(): Boolean {
-        val files = getIntervalImageFiles()
+    fun clearIntervalImages(sessionDir: File? = null): Boolean {
+        val files = getIntervalImageFiles(sessionDir)
         var allDeleted = true
         for (file in files) {
             if (file.exists() && !file.delete()) {
                 allDeleted = false
             }
+        }
+        // 空になったセッションディレクトリ自体も削除
+        if (sessionDir != null && sessionDir.exists() && sessionDir.isDirectory && sessionDir.listFiles()?.isEmpty() == true) {
+            sessionDir.delete()
+        }
+        return allDeleted
+    }
+
+    /**
+     * すべてのインターバル撮影セッションの画像をすべて削除する
+     */
+    fun clearAllIntervalImages(): Boolean {
+        val sessions = getIntervalSessions()
+        var allDeleted = true
+        for (session in sessions) {
+            if (!clearIntervalImages(session)) {
+                allDeleted = false
+            }
+        }
+        val legacyDir = getPublicAStargazerDir("Interval")
+        if (legacyDir.exists()) {
+            legacyDir.listFiles()?.forEach { if (it.isFile) it.delete() }
+            if (legacyDir.listFiles()?.isEmpty() == true) legacyDir.delete()
         }
         return allDeleted
     }
