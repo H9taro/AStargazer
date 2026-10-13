@@ -230,6 +230,7 @@ private fun MainAppContent() {
     val hasExistingIntervalFiles = remember { StorageHelper.getIntervalImageFiles().isNotEmpty() }
 
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var latestIntervalBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
 
     var isIntervalShootingActive by remember { mutableStateOf(false) }
@@ -274,6 +275,8 @@ private fun MainAppContent() {
         elapsedSeconds = 0
         currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
         capturedTestBitmap = null
+        latestIntervalBitmap?.recycle()
+        latestIntervalBitmap = null
 
         statusMessage = ""
         selectedTab = MainMenuTab.SETUP
@@ -291,6 +294,8 @@ private fun MainAppContent() {
         val baseLocation = LocationHelper.getLastKnownLocation(context)
         val exposureSeconds = selectedExposureSeconds
 
+        latestIntervalBitmap?.recycle()
+        latestIntervalBitmap = null
         isIntervalShootingActive = true
         isCamera2BurstActive = false
         camera2BurstStatus = "インターバル撮影を準備中..."
@@ -321,11 +326,18 @@ private fun MainAppContent() {
                 Log.i("IntervalPerf", "Camera2 session ready; starting repeating capture")
                 session.startRepeatingCapture(
                     onFrameSaved = { frame ->
-                        coroutineScope.launch(Dispatchers.Main) {
-                            shotCount = maxOf(shotCount, frame.index)
-                            currentRemainingShots = (currentRemainingShots - 1).coerceAtLeast(0)
-                            remainingShots = currentRemainingShots
-                            isIntervalCompleted = true
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val bmp = BitmapFactory.decodeFile(frame.file.absolutePath)
+                            withContext(Dispatchers.Main) {
+                                if (bmp != null) {
+                                    latestIntervalBitmap?.recycle()
+                                    latestIntervalBitmap = bmp
+                                }
+                                shotCount = maxOf(shotCount, frame.index)
+                                currentRemainingShots = (currentRemainingShots - 1).coerceAtLeast(0)
+                                remainingShots = currentRemainingShots
+                                isIntervalCompleted = true
+                            }
                         }
                     },
                     onFailure = { exception ->
@@ -453,15 +465,17 @@ private fun MainAppContent() {
         }
     }
 
-    // シャッターボタン押下アクション（撮影中・処理中にももう一度押すとキャンセル、試写・ダーク撮影中は中断/キャンセル）
     val onTriggerShutter: () -> Unit = {
         if (isProcessing) {
             when (currentStep) {
-                WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {
+                WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST,
+                WorkflowStep.TEST_RESULT_DISPLAY -> {
                     isTestShootingInterrupted = true
                     activeTestSession?.close()
                     activeTestSession = null
-                    statusMessage = "試写を中断しました。撮影できた画像から選択してください。"
+                    isProcessing = false
+                    isCamera2BurstActive = false
+                    statusMessage = "試写を中断しました。撮影できた画像を確認してください。"
                 }
                 WorkflowStep.DARK_FRAME_SHOOTING -> {
                     activeTestSession?.close()
@@ -496,13 +510,7 @@ private fun MainAppContent() {
                         WorkflowStep.POLARIS_ALIGNMENT_NOTICE -> currentStep =
                             WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST
 
-                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST -> {
-                            isTestShootingInterrupted = true
-                            activeTestSession?.close()
-                            activeTestSession = null
-                            statusMessage = "試写を中断しました。撮影できた画像から選択してください。"
-                        }
-
+                        WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST,
                         WorkflowStep.TEST_RESULT_DISPLAY -> {
                             val targetIso = selectedTestIso
                             if (StorageHelper.hasValidDarkFrame(
@@ -614,6 +622,14 @@ private fun MainAppContent() {
                             BitmapFactory.decodeFile(testFile.absolutePath)
                         } ?: continue
                         results.add(iso to bmp)
+
+                        // 試写を1枚撮影するごとに撮影結果の画像を表示する
+                        multiTestResults = results.toList()
+                        selectedTestIso = iso
+                        capturedTestBitmap = bmp
+                        currentStep = WorkflowStep.TEST_RESULT_DISPLAY
+                        statusMessage = "試写撮影中（${results.size}/${isos.size}枚）: ISO $iso 撮影完了。スワイプで切り替え、シャッターで確定または中断"
+
                         FileViewerHelper.scanFile(context, testFile)
                     } catch (e: Exception) {
                         if (isTestShootingInterrupted) {
@@ -760,6 +776,7 @@ private fun MainAppContent() {
                         remainingShots = remainingShots,
                         elapsedSeconds = elapsedSeconds,
                         selectedExposureSeconds = selectedExposureSeconds,
+                        latestIntervalBitmap = latestIntervalBitmap,
                         onTriggerShutter = onTriggerShutter
                     )
                 }
@@ -889,22 +906,7 @@ private fun SetupTabContent(
     val latestSelectedTestIso = rememberUpdatedState(selectedTestIso)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (isCamera2BurstActive) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = statusMessage,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(24.dp)
-                )
-            }
-        } else if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
+        if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -962,6 +964,21 @@ private fun SetupTabContent(
                         )
                     }
                 }
+            }
+        } else if (isCamera2BurstActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = statusMessage,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(24.dp)
+                )
             }
         } else {
             CameraPreview(
@@ -1079,7 +1096,7 @@ private fun SetupTabContent(
         ) {
             Button(
                 onClick = onShutterClick,
-                enabled = !isCamera2BurstActive || currentStep == WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST || currentStep == WorkflowStep.DARK_FRAME_SHOOTING,
+                enabled = !isCamera2BurstActive || currentStep == WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST || currentStep == WorkflowStep.TEST_RESULT_DISPLAY || currentStep == WorkflowStep.DARK_FRAME_SHOOTING,
                 modifier = Modifier.size(72.dp),
                 shape = CircleShape,
                 colors = ButtonDefaults.buttonColors(
@@ -1124,10 +1141,18 @@ private fun IntervalTabContent(
     remainingShots: Int,
     elapsedSeconds: Int,
     selectedExposureSeconds: Double,
+    latestIntervalBitmap: Bitmap?,
     onTriggerShutter: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        if (isCamera2BurstActive) {
+        if (latestIntervalBitmap != null) {
+            Image(
+                bitmap = latestIntervalBitmap.asImageBitmap(),
+                contentDescription = "直近のインターバル撮影画像",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else if (isCamera2BurstActive) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1147,6 +1172,25 @@ private fun IntervalTabContent(
                 modifier = Modifier.fillMaxSize()
             )
             PortraitCropGuidesOverlay()
+        }
+
+        // 最新撮影画像バッジ/インジケーター
+        if (latestIntervalBitmap != null) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 80.dp)
+            ) {
+                Text(
+                    text = "📷 撮影確認: ${shotCount}コマ目",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
         }
 
         // ヘッダー（2行目：撮影数の右に経過秒数を追加）

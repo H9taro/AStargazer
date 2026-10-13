@@ -111,11 +111,6 @@ object StorageHelper {
         return false
     }
 
-    fun createIntervalJpegFile(index: Int): File {
-        val dir = getPublicAStargazerDir("Interval")
-        return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, System.currentTimeMillis()))
-    }
-
     /**
      * 比較明合成（Lighten Blend）静止画の保存先ファイル (出力は標準高画質 JPEG)
      */
