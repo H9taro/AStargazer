@@ -547,14 +547,14 @@ private fun MainAppContent() {
         }
     }
 
-    // 試写と自動調整（3段階試写必須、途中中断対応）
+    // 試写と自動調整（マルチISO試写、最低ISOから最高ISOまで1段ずつ、途中中断対応）
     fun runTestShootingAndAutoAdjust() {
-        val optimalIso =
+        val baseIso =
             CameraControlManager.calculateOptimalIsoForExposure(selectedExposureSeconds)
         isProcessing = true
         isCamera2BurstActive = true
         isTestShootingInterrupted = false
-        statusMessage = "3段階のISO感度で試写を実行中...（シャッター押下で中断可能）"
+        statusMessage = "マルチISO試写を実行中...（シャッター押下で中断可能）"
 
         val currentLocation = LocationHelper.getLastKnownLocation(context)
 
@@ -572,27 +572,18 @@ private fun MainAppContent() {
                 val minIso = sensitivityRange?.lower ?: 100
                 val maxIso = sensitivityRange?.upper ?: 6400
 
-                val mid = optimalIso.coerceIn(minIso, maxIso)
-                val low = maxOf(mid / 2, minIso)
-                val high = minOf(mid * 2, maxIso)
-
+                val minTestIso = maxOf(baseIso, minIso)
                 val list = mutableListOf<Int>()
-                if (mid in (low + 1)..<high) {
-                    list.add(low)
-                    list.add(mid)
-                    list.add(high)
-                } else if (mid >= maxIso) {
-                    val step3 = maxOf(mid / 4, minIso)
-                    val step2 = maxOf(mid / 2, minIso)
-                    list.add(step3)
-                    list.add(step2)
-                    list.add(mid)
-                } else {
-                    val step2 = minOf(mid * 2, maxIso)
-                    val step3 = minOf(mid * 4, maxIso)
-                    list.add(mid)
-                    list.add(step2)
-                    list.add(step3)
+                var currentIso = minTestIso
+                while (currentIso <= maxIso) {
+                    list.add(currentIso)
+                    if (currentIso >= maxIso) break
+                    val nextIso = currentIso * 2
+                    if (nextIso > maxIso) {
+                        list.add(maxIso)
+                        break
+                    }
+                    currentIso = nextIso
                 }
                 val isos = list.distinct()
 
@@ -654,8 +645,7 @@ private fun MainAppContent() {
                 }
 
                 multiTestResults = results
-                val initialResult =
-                    results.firstOrNull { it.first == optimalIso } ?: results.first()
+                val initialResult = results.first()
                 selectedTestIso = initialResult.first
                 capturedTestBitmap = initialResult.second
 

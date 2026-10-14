@@ -19,15 +19,15 @@ object CameraControlManager {
      */
     fun calculateOptimalIsoForExposure(exposureSeconds: Double): Int {
         return when {
-            exposureSeconds <= 0.25 -> 3200
-            exposureSeconds <= 0.5 -> 3200
-            exposureSeconds <= 1.0 -> 3200
-            exposureSeconds <= 2.0 -> 3200
-            exposureSeconds <= 4.0 -> 1600
-            exposureSeconds <= 8.0 -> 1600
-            exposureSeconds <= 15.0 -> 1600
-            exposureSeconds <= 30.0 -> 1600
-            else -> 800
+            exposureSeconds <= 0.25 -> 1600
+            exposureSeconds <= 0.5 -> 1600
+            exposureSeconds <= 1.0 -> 1600
+            exposureSeconds <= 2.0 -> 800
+            exposureSeconds <= 4.0 -> 800
+            exposureSeconds <= 8.0 -> 800
+            exposureSeconds <= 15.0 -> 400
+            exposureSeconds <= 30.0 -> 400
+            else -> 400
         }
     }
 
