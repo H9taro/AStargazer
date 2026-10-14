@@ -27,7 +27,7 @@ object VideoEncoderHelper {
         outputFile: File,
         darkFrameFile: File? = null,
         resolutionLabel: String = "Full HD (1080p)",
-        frameRate: Int = 30,
+        frameRate: Int = 24,
         cropOffsetX: Float = 0.5f,
         cropOffsetY: Float = 0.5f,
         onProgress: (Float) -> Unit = {}

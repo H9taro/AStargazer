@@ -107,6 +107,10 @@ fun SaveTabContent(
     var selectedMode by remember { mutableStateOf(ExportMode.FULLHD_TIMELAPSE) }
     var dropdownExpanded by remember { mutableStateOf(false) }
 
+    // フレームレート選択 (デフォルト: 24 fps)
+    var selectedFrameRate by remember { mutableIntStateOf(24) }
+    var frameRateDropdownExpanded by remember { mutableStateOf(false) }
+
     // クロップ位置（正規化オフセット: 0.0f = 左端/上端, 1.0f = 右端/下端）
     var cropOffsetX by remember { mutableFloatStateOf(0.5f) }
     var cropOffsetY by remember { mutableFloatStateOf(0.5f) }
@@ -183,7 +187,7 @@ fun SaveTabContent(
                     outputFile = outputFile,
                     darkFrameFile = darkFrameFile.exists().let { if (it) darkFrameFile else null },
                     resolutionLabel = selectedMode.resolutionLabel,
-                    frameRate = 30,
+                    frameRate = selectedFrameRate,
                     cropOffsetX = cropOffsetX,
                     cropOffsetY = cropOffsetY,
                     onProgress = { p -> progress = p }
@@ -421,6 +425,77 @@ fun SaveTabContent(
                                 dropdownExpanded = false
                             }
                         )
+                    }
+                }
+            }
+
+            // タイムラプス時のフレームレート選択（風景・天体に一般的な24fpsをデフォルトに設定）
+            if (selectedMode.isTimelapse) {
+                Spacer(modifier = Modifier.height(8.dp))
+
+                ExposedDropdownMenuBox(
+                    expanded = frameRateDropdownExpanded,
+                    onExpandedChange = { if (!isGenerating) frameRateDropdownExpanded = !frameRateDropdownExpanded },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Surface(
+                        color = Color(0xFF1E88E5).copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(text = "フレームレート", color = Color.LightGray, fontSize = 10.sp)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = when (selectedFrameRate) {
+                                        15 -> "15 fps (スロー)"
+                                        24 -> "24 fps (標準・風景)"
+                                        30 -> "30 fps (高速)"
+                                        else -> "$selectedFrameRate fps"
+                                    },
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = frameRateDropdownExpanded)
+                        }
+                    }
+
+                    ExposedDropdownMenu(
+                        expanded = frameRateDropdownExpanded,
+                        onDismissRequest = { frameRateDropdownExpanded = false },
+                        modifier = Modifier.background(Color(0xFF1E1E1E))
+                    ) {
+                        listOf(
+                            24 to "24 fps (標準・風景)",
+                            15 to "15 fps (スロー)",
+                            30 to "30 fps (高速)"
+                        ).forEach { (fps, label) ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = label,
+                                        color = if (fps == selectedFrameRate) Color(0xFF1E88E5) else Color.White,
+                                        fontWeight = if (fps == selectedFrameRate) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                onClick = {
+                                    selectedFrameRate = fps
+                                    frameRateDropdownExpanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }
