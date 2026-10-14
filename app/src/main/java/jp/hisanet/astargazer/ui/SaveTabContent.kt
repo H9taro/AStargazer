@@ -3,6 +3,7 @@ package jp.hisanet.astargazer.ui
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -68,20 +69,20 @@ import java.io.File
 
 /**
  * 出力モード
- * 1. HD（タイムラプス）
- * 2. Full HD（タイムラプス）
- * 3. 4K（タイムラプス）
- * 4. 最高画質（比較明合成）
+ * 1. HDタイムラプス
+ * 2. Full HDタイムラプス
+ * 3. 4Kタイムラプス
+ * 4. 比較明合成
  */
 enum class ExportMode(
     val label: String,
     val isTimelapse: Boolean,
     val resolutionLabel: String
 ) {
-    HD_TIMELAPSE("HD（タイムラプス）", true, "HD (720p)"),
-    FULLHD_TIMELAPSE("Full HD（タイムラプス）", true, "Full HD (1080p)"),
-    UHD_4K_TIMELAPSE("4K（タイムラプス）", true, "4K"),
-    MAX_COMPOSITE("最高画質（比較明合成）", false, "最高画質");
+    HD_TIMELAPSE("HDタイムラプス", true, "HD (720p)"),
+    FULLHD_TIMELAPSE("Full HDタイムラプス", true, "Full HD (1080p)"),
+    UHD_4K_TIMELAPSE("4Kタイムラプス", true, "4K"),
+    MAX_COMPOSITE("比較明合成", false, "比較明合成");
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,8 +122,8 @@ fun SaveTabContent(
 
     var statusMessage by remember {
         mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "撮影済み静止画: ${intervalFiles.size}コマ (${selectedSession?.name ?: ""})\n画像ドラッグ: クロップ範囲移動"
-            else "保存可能な撮影済み画像がありません。"
+            if (intervalFiles.isNotEmpty()) "元画像: ${intervalFiles.size}コマ (${selectedSession?.name ?: ""})"
+            else "元画像がありません。"
         )
     }
 
@@ -206,7 +207,7 @@ fun SaveTabContent(
                 isGenerating = false
                 if (success) {
                     FileViewerHelper.scanFile(context, outputFile)
-                    statusMessage = "${selectedMode.label} の生成が完了しました！\n保存先: ${outputFile.name}"
+                    statusMessage = "生成完了: ${outputFile.name}"
                     FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
                 } else {
                     statusMessage = "${selectedMode.label} の生成に失敗しました。"
@@ -219,7 +220,7 @@ fun SaveTabContent(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("🗑️ 撮影済み画像の削除", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+            title = { Text("🗑️ 元画像の削除", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -262,7 +263,7 @@ fun SaveTabContent(
                                     selectedSession = updatedSessions.firstOrNull()
                                     intervalFiles = updatedFiles
                                     currentImageIndex = 0
-                                    statusMessage = if (success) "すべての回のインターバル画像を削除しました。" else "一部の削除に失敗しました。"
+                                    statusMessage = if (success) "すべての回の元画像を削除しました。" else "一部の削除に失敗しました。"
                                 }
                             }
                         },
@@ -429,7 +430,7 @@ fun SaveTabContent(
                 }
             }
 
-            // タイムラプス時のフレームレート選択（風景・天体に一般的な24fpsをデフォルトに設定）
+            // タイムラプス時のフレームレート選択（天体に一般的な24fpsをデフォルトに設定）
             if (selectedMode.isTimelapse) {
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -459,7 +460,7 @@ fun SaveTabContent(
                                 Text(
                                     text = when (selectedFrameRate) {
                                         15 -> "15 fps (スロー)"
-                                        24 -> "24 fps (標準・風景)"
+                                        24 -> "24 fps (標準)"
                                         30 -> "30 fps (高速)"
                                         else -> "$selectedFrameRate fps"
                                     },
@@ -478,7 +479,7 @@ fun SaveTabContent(
                         modifier = Modifier.background(Color(0xFF1E1E1E))
                     ) {
                         listOf(
-                            24 to "24 fps (標準・風景)",
+                            24 to "24 fps (標準)",
                             15 to "15 fps (スロー)",
                             30 to "30 fps (高速)"
                         ).forEach { (fps, label) ->
@@ -559,19 +560,34 @@ fun SaveTabContent(
                 val boxWidth = constraints.maxWidth.toFloat()
                 val boxHeight = constraints.maxHeight.toFloat()
 
-                if (currentBitmap != null) {
+                val rotatedBitmap = remember(currentBitmap) {
+                    if (currentBitmap != null) {
+                        val matrix = Matrix().apply { postRotate(270f) }
+                        Bitmap.createBitmap(
+                            currentBitmap,
+                            0, 0,
+                            currentBitmap.width, currentBitmap.height,
+                            matrix,
+                            true
+                        )
+                    } else {
+                        null
+                    }
+                }
+
+                if (rotatedBitmap != null && currentBitmap != null) {
                     Image(
-                        bitmap = currentBitmap.asImageBitmap(),
-                        contentDescription = "プレビュー画像",
+                        bitmap = rotatedBitmap.asImageBitmap(),
+                        contentDescription = "元画像",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit
                     )
 
-                    val imgWidth = currentBitmap.width.toFloat()
-                    val imgHeight = currentBitmap.height.toFloat()
+                    val rotWidth = currentBitmap.height.toFloat()
+                    val rotHeight = currentBitmap.width.toFloat()
 
-                    if (imgWidth > 0f && imgHeight > 0f && boxWidth > 0f && boxHeight > 0f) {
-                        val imgAspect = imgWidth / imgHeight
+                    if (rotWidth > 0f && rotHeight > 0f && boxWidth > 0f && boxHeight > 0f) {
+                        val imgAspect = rotWidth / rotHeight
                         val boxAspect = boxWidth / boxHeight
 
                         val (displayedImgWidth, displayedImgHeight) = if (boxAspect > imgAspect) {
@@ -587,8 +603,8 @@ fun SaveTabContent(
                             else -> 1.0f
                         }
 
-                        val guideHeight = displayedImgHeight * scale
-                        val guideWidth = (guideHeight * 9f) / 16f
+                        val guideWidth = displayedImgWidth * scale
+                        val guideHeight = guideWidth * 9f / 16f
 
                         val movableWidth = (displayedImgWidth - guideWidth).coerceAtLeast(0f)
                         val movableHeight = (displayedImgHeight - guideHeight).coerceAtLeast(0f)
@@ -601,17 +617,17 @@ fun SaveTabContent(
                                         detectDragGestures { change, dragAmount ->
                                             change.consume()
                                             if (movableWidth > 0f) {
-                                                cropOffsetX = (cropOffsetX + dragAmount.x / movableWidth).coerceIn(0f, 1f)
+                                                cropOffsetY = (cropOffsetY + dragAmount.x / movableWidth).coerceIn(0f, 1f)
                                             }
                                             if (movableHeight > 0f) {
-                                                cropOffsetY = (cropOffsetY + dragAmount.y / movableHeight).coerceIn(0f, 1f)
+                                                cropOffsetX = (cropOffsetX - dragAmount.y / movableHeight).coerceIn(0f, 1f)
                                             }
                                         }
                                     }
                                 }
                         )
 
-                        // クロップ枠ガイドオーバーレイ（最高画質時は非表示）
+                        // クロップ枠ガイドオーバーレイ（比較明合成時は非表示）
                         SaveCropGuideOverlay(
                             resolutionLabel = selectedMode.resolutionLabel,
                             cropOffsetX = cropOffsetX,
@@ -622,7 +638,7 @@ fun SaveTabContent(
                     }
                 } else {
                     Text(
-                        text = "プレビュー画像がありません\n(撮影回を選択してください)",
+                        text = "元画像がありません\n(撮影回を選択してください)",
                         color = Color.LightGray,
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center
@@ -692,7 +708,7 @@ fun SaveTabContent(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // クリアボタン（押下時に削除確認ダイアログを表示）
+            // 削除ボタン（押下時に削除確認ダイアログを表示）
             OutlinedButton(
                 onClick = { showDeleteDialog = true },
                 enabled = !isGenerating && sessions.isNotEmpty(),
@@ -706,7 +722,7 @@ fun SaveTabContent(
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Text(
-                    text = "🗑️ 撮影済み画像をクリア（削除）",
+                    text = "🗑️ 元画像を削除",
                     color = Color(0xFFFF5252),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
@@ -735,7 +751,10 @@ private fun SaveCropGuideOverlay(
 
         if (width <= 0f || height <= 0f || bitmapWidth <= 0 || bitmapHeight <= 0) return@BoxWithConstraints
 
-        val imgAspect = bitmapWidth.toFloat() / bitmapHeight.toFloat()
+        val rotWidth = bitmapHeight.toFloat()
+        val rotHeight = bitmapWidth.toFloat()
+
+        val imgAspect = rotWidth / rotHeight
         val boxAspect = width / height
 
         val (displayedImgWidth, displayedImgHeight) = if (boxAspect > imgAspect) {
@@ -762,14 +781,14 @@ private fun SaveCropGuideOverlay(
         }
 
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val guideHeight = displayedImgHeight * scale
-            val guideWidth = (guideHeight * 9f) / 16f
+            val guideWidth = displayedImgWidth * scale
+            val guideHeight = guideWidth * 9f / 16f
 
             val movableWidth = (displayedImgWidth - guideWidth).coerceAtLeast(0f)
             val movableHeight = (displayedImgHeight - guideHeight).coerceAtLeast(0f)
 
-            val guideLeft = imgLeft + movableWidth * cropOffsetX.coerceIn(0f, 1f)
-            val guideTop = imgTop + movableHeight * cropOffsetY.coerceIn(0f, 1f)
+            val guideLeft = imgLeft + movableWidth * cropOffsetY.coerceIn(0f, 1f)
+            val guideTop = imgTop + movableHeight * (1f - cropOffsetX.coerceIn(0f, 1f))
 
             val maskColor = Color.Black.copy(alpha = 0.5f)
 
