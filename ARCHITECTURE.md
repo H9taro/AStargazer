@@ -15,16 +15,16 @@ AStargazer は星景撮影向けの単一モジュール Android アプリであ
 | 領域 | 現在の実装 |
 |---|---|
 | Android | `minSdk 30`、`compileSdk 37`、`targetSdk 37` |
-| 言語 | Kotlin `2.2.10` |
+| 言語 | Kotlin `2.4.21` |
 | UI | Jetpack Compose、Material 3 |
 | カメラ | CameraX `1.6.2` と Camera2 API / Camera2 interop |
-| 静止画メタデータ | AndroidX ExifInterface `1.3.7` |
+| 静止画メタデータ | AndroidX ExifInterface `1.4.2` |
 | 動画エンコード | Android `MediaCodec` / `MediaMuxer`（H.264/AVC、MP4） |
 | 非同期処理 | Kotlin Coroutines（画面側の `CoroutineScope` / `Dispatchers` / `LaunchedEffect`） |
-| ビルド | Gradle Wrapper `9.5.0`、Android Gradle Plugin `9.3.3` |
+| ビルド | Gradle Wrapper `9.6.0`、Android Gradle Plugin `9.4.1` |
 | Java 互換性 | Java source / target `11`。Gradle daemon toolchain は JDK `25` |
 
-Compose BOM は `2026.02.01`。その他の主要依存は Activity Compose `1.8.0`、Lifecycle `2.6.1`、Core KTX `1.10.1`、JUnit `4.13.2`、AndroidX Test JUnit `1.1.5`、Espresso `3.5.1`。
+Compose BOM は `2026.09.00`。その他の主要依存は Activity Compose `1.13.0`、Lifecycle `2.11.0`、Core KTX `1.19.1`、JUnit `4.13.2`、AndroidX Test JUnit `1.3.0`、Espresso `3.7.0`。
 
 以下は現在の構成には含まれない: Room、MediaStore による保存、Hilt、Timber、FFmpegKit。ログ出力には Android の `Log` API を使用する。
 
@@ -64,15 +64,16 @@ Android launcher
 
 ### UI と状態管理
 
-`MainScreen` と `MainAppContent` が Compose の `remember` 状態および `LaunchedEffect` を用いて、選択タブ、設定手順、露出時間、撮影中フラグ、撮影数、進捗、ステータスメッセージを管理する。ボトムナビゲーションは「撮影前設定」「インターバル撮影」「仕上げ」の3画面を切り替える。専用の ViewModel や状態管理層はない。
+`MainScreen` と `MainAppContent` が Compose の `remember` 状態および `LaunchedEffect` を用いて、選択タブ、設定手順（`WorkflowStep`: `POLARIS_ALIGNMENT_NOTICE`, `POLARIS_TEST_SHOOTING_ADJUST`, `TEST_RESULT_DISPLAY`, `DARK_FRAME_NOTICE`, `DARK_FRAME_SHOOTING`, `SETUP_COMPLETED`）、露出時間、撮影中フラグ、撮影数、進捗、ステータスメッセージを管理する。ボトムナビゲーションは「撮影前設定」「インターバル撮影」「仕上げ」の3画面を切り替える。専用の ViewModel や状態管理層はない。
 
 ### カメラと撮影・ワークフロー
 
-- **撮影前設定のワークフロー**:
-  1. ユーザーは露出時間を選択し、シャッターを押してマルチISO試写（最低ISO感度からセンサー最高ISO感度まで1段ずつ増加、途中中断可能）を実行する。
-  2. 試写結果表示画面（`TEST_RESULT_DISPLAY`）で、画像エリアを横スワイプして好みのISO感度画像を選択する。
-  3. 選択された露出時間・ISO感度に一致するダークフレームがすでに存在する場合は自動流用する。存在しない場合のみ案内ステップ（`DARK_FRAME_NOTICE`）を経てレンズを覆って撮影し、`dark_exp_{露出秒数}s_iso_{ISO感度}.png` として保存する。
-  4. 試写画像自体に対するダークフレーム減算は行わず、そのままテスト画像（`TestShooting/`）として保存され、セットアップが完了する。
+- **撮影前設定のワークフロー (`WorkflowStep`)**:
+  1. **北極星合わせ案内 (`POLARIS_ALIGNMENT_NOTICE`)**: 撮影前の構図合わせの案内を表示する。
+  2. **試写と自動調整 (`POLARIS_TEST_SHOOTING_ADJUST`)**: シャッターを押し、マルチISO試写（最低ISO感度からセンサー最高ISO感度まで1段ずつ増加、途中中断可能）を実行する。
+  3. **試写結果表示 (`TEST_RESULT_DISPLAY`)**: 試写結果表示画面で、画像エリアを横スワイプして好みのISO感度画像を選択する。
+  4. **ダークフレーム確認・撮影 (`DARK_FRAME_NOTICE` / `DARK_FRAME_SHOOTING`)**: 選択された露出時間・ISO感度に一致するダークフレームがすでに存在する場合は自動流用する。存在しない場合のみ案内ステップを経てレンズを覆って撮影し、`dark_exp_{露出秒数}s_iso_{ISO感度}.png` として保存する。
+  5. **撮影前設定完了 (`SETUP_COMPLETED`)**: セットアップが完了し、インターバル撮影へ進む準備が整う。
 - **カメラAPIの役割とライフサイクル**:
   - CameraX はプレビュー専用で、静止画取得には使用しない。プレビューは `CameraPreview` が `ProcessCameraProvider` を使って画面のライフサイクルへバインドする（無限遠ピント `0.0f`・露出時間・感度固定）。
   - 試写、ダークフレーム撮影、インターバル撮影はすべて `Camera2BurstSession` が `CameraManager`、`CameraDevice`、`CameraCaptureSession`、`ImageReader` を直接使用する。単発撮影には `captureSingleFrame()`、連続インターバル撮影には `startRepeatingCapture()` を使う。
@@ -130,7 +131,7 @@ AQUOS sense8 (SH-M26) において `CameraManager.getCameraIdList()` を呼び�
 
 ### ベンダー制限メカニズム (`vendor.camera.aux.packagelist`)
 
-- SHARP (AQUOS) や Sony (Xperia) 等の Qualcomm SoC 搭載 OEM 端末では、ベンダー独自のアクセスポリシープロパティ（`vendor.camera.aux.packagelist`）にホワイトリスト登録された公式カメラアプリ（`jp.co.sharp.android.camera` 等）以外の一般サードパーティアプリ（Open Camera, Camera FV-5, mcpro24fps, AStargazer 等）に対し、サブカメラ ID（`2` 以降）へのアクセスを OS/HAL レベルで遮断する仕様となっている。
+- SHARP (AQUOS) や Sony (Xperia) 等の Qualcomm SoC 搭載 OEM 端末では、ベンダー独自のアクセスポリシープロパティ（`vendor.camera.aux.packagelist`）にホワイトリスト登録された公式カメラアプリ（`jp.co.sharp.android.camera` 等）以外の一般サードパーティアプリ（Open Camera, Camera FV-5, mcpro24fps, AStargazer 等）に対象サブカメラ ID（`2` 以降）へのアクセスを OS/HAL レベルで遮断する仕様となっている。
 - `vendor.camera.aux.packagelist` はシステム保護プロパティであり、非 Root アプリケーション権限からの変更・バイパスは不可能である。
 - したがって、AQUOS sense8 等の端末では、標準 Camera2 / CameraX API を使用するサードパーティ製アプリから超広角カメラへアクセスすることはできない。
 
