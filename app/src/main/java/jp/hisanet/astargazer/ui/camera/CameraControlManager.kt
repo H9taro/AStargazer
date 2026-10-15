@@ -41,14 +41,25 @@ object CameraControlManager {
      * @return プレビューに適用された最大ISO感度値
      */
     @OptIn(ExperimentalCamera2Interop::class)
-    fun setPreviewStarVisibilityParams(camera: Camera): Int {
+    fun setPreviewStarVisibilityParams(camera: Camera, context: android.content.Context? = null): Int {
         val camera2CameraControl = Camera2CameraControl.from(camera.cameraControl)
         val camera2CameraInfo = Camera2CameraInfo.from(camera.cameraInfo)
 
         val sensitivityRange = camera2CameraInfo.getCameraCharacteristic(
             CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE
-        )
-        val maxIso = sensitivityRange?.upper ?: 3200
+        ) ?: context?.let { ctx ->
+            try {
+                val cameraManager = ctx.getSystemService(android.content.Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+                val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                    cameraManager.getCameraCharacteristics(id)[CameraCharacteristics.LENS_FACING] ==
+                        CameraCharacteristics.LENS_FACING_BACK
+                } ?: cameraManager.cameraIdList.firstOrNull()
+                cameraId?.let { cameraManager.getCameraCharacteristics(it).get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) }
+            } catch (_: Exception) {
+                null
+            }
+        }
+        val maxIso = sensitivityRange?.upper ?: 12750
         val fixedExposureNs = 250_000_000L // 0.25秒固定
 
         val optionsBuilder = CaptureRequestOptions.Builder()
@@ -61,7 +72,7 @@ object CameraControlManager {
                 CaptureRequest.LENS_FOCUS_DISTANCE,
                 0.0f
             )
-            // AE OFF & マニュアル固定露光 (最大ISO & 1秒)
+            // AE OFF & マニュアル固定露光 (最大ISO & 0.25秒)
             .setCaptureRequestOption(
                 CaptureRequest.CONTROL_AE_MODE,
                 CaptureRequest.CONTROL_AE_MODE_OFF
@@ -79,7 +90,7 @@ object CameraControlManager {
 
         Log.i(
             "CameraPreview",
-            "Live Preview configured: Fixed Exposure=1.0s, Max ISO=$maxIso, Manual Infinity Focus=0.0f"
+            "Live Preview configured: Fixed Exposure=0.25s, Max ISO=$maxIso, Manual Infinity Focus=0.0f"
         )
         return maxIso
     }

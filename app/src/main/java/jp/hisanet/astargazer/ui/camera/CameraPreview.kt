@@ -53,8 +53,8 @@ fun CameraPreview(
                     preview
                 )
                 // ライブプレビュー表示は撮影条件とは完全に分離し、星の視認性を最大化する (0.25秒露光 & 最大ISO & 無限遠)
-                val usedMaxIso = applyStarVisibilitySettings(camera)
-                Log.i("CameraPreview", "CameraPreview applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=1.0s, Focus=0.0f")
+                val usedMaxIso = applyStarVisibilitySettings(camera, context)
+                Log.i("CameraPreview", "CameraPreview applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=0.25s, Focus=0.0f")
                 Log.i("Camera2Perf", "Preview bind complete")
             } catch (e: Exception) {
                 Log.e("CameraPreview", "Camera binding failed, retrying in 500ms...", e)
@@ -70,8 +70,8 @@ fun CameraPreview(
                             CameraSelector.DEFAULT_BACK_CAMERA,
                             preview
                         )
-                        val usedMaxIso = applyStarVisibilitySettings(camera)
-                        Log.i("CameraPreview", "CameraPreview retry applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=1.0s, Focus=0.0f")
+                        val usedMaxIso = applyStarVisibilitySettings(camera, context)
+                        Log.i("CameraPreview", "CameraPreview retry applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=0.25s, Focus=0.0f")
                         Log.i("Camera2Perf", "Preview bind retry complete")
                     } catch (retryEx: Exception) {
                         Log.e("CameraPreview", "Camera binding retry failed", retryEx)
@@ -99,6 +99,6 @@ fun CameraPreview(
 }
 
 @OptIn(ExperimentalCamera2Interop::class)
-private fun applyStarVisibilitySettings(camera: Camera): Int {
-    return CameraControlManager.setPreviewStarVisibilityParams(camera)
+private fun applyStarVisibilitySettings(camera: Camera, context: android.content.Context): Int {
+    return CameraControlManager.setPreviewStarVisibilityParams(camera, context)
 }
