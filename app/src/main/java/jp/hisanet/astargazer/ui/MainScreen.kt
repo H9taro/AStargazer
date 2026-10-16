@@ -2,6 +2,7 @@ package jp.hisanet.astargazer.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +41,9 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -64,6 +69,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -672,12 +678,20 @@ private fun MainAppContent() {
         }
     }
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar(
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    if (isLandscape) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            NavigationRail(
                 containerColor = Color(0xFF121212),
                 contentColor = Color.White
             ) {
+                Spacer(modifier = Modifier.height(16.dp))
                 MainMenuTab.entries.forEach { tab ->
                     val enabled = !isCamera2BurstActive && !isIntervalShootingActive && when (tab) {
                         MainMenuTab.SETUP -> true
@@ -685,7 +699,7 @@ private fun MainAppContent() {
                         MainMenuTab.SAVE -> isIntervalCompleted || hasExistingIntervalFiles
                     }
 
-                    NavigationBarItem(
+                    NavigationRailItem(
                         selected = selectedTab == tab,
                         enabled = enabled,
                         onClick = {
@@ -697,7 +711,7 @@ private fun MainAppContent() {
                         label = {
                             Text(
                                 text = tab.label,
-                                fontSize = 12.sp,
+                                fontSize = 10.sp,
                                 fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Normal
                             )
                         },
@@ -715,7 +729,7 @@ private fun MainAppContent() {
                                     )
                             )
                         },
-                        colors = NavigationBarItemDefaults.colors(
+                        colors = NavigationRailItemDefaults.colors(
                             selectedIconColor = Color(0xFF1E88E5),
                             selectedTextColor = Color(0xFF1E88E5),
                             unselectedIconColor = Color.Gray,
@@ -727,55 +741,167 @@ private fun MainAppContent() {
                     )
                 }
             }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+            ) {
+                when (selectedTab) {
+                    MainMenuTab.SETUP -> {
+                        SetupTabContent(
+                            isCamera2BurstActive = isCamera2BurstActive,
+                            currentStep = currentStep,
+                            capturedTestBitmap = capturedTestBitmap,
+                            selectedExposureSeconds = selectedExposureSeconds,
+                            isDropdownExpanded = isDropdownExpanded,
+                            isProcessing = isProcessing,
+                            statusMessage = statusMessage,
+                            multiTestResults = multiTestResults,
+                            selectedTestIso = selectedTestIso,
+                            onIsoSelect = { iso, bmp ->
+                                selectedTestIso = iso
+                                capturedTestBitmap = bmp
+                            },
+                            onExposureChange = { selectedExposureSeconds = it },
+                            onDropdownToggle = { isDropdownExpanded = it },
+                            onShutterClick = onTriggerShutter,
+                            isLandscape = true
+                        )
+                    }
+
+                    MainMenuTab.INTERVAL -> {
+                        IntervalTabContent(
+                            isIntervalActive = isIntervalShootingActive,
+                            isCamera2BurstActive = isCamera2BurstActive,
+                            camera2BurstStatus = camera2BurstStatus,
+                            shotCount = shotCount,
+                            remainingShots = remainingShots,
+                            elapsedSeconds = elapsedSeconds,
+                            selectedExposureSeconds = selectedExposureSeconds,
+                            latestIntervalBitmap = latestIntervalBitmap,
+                            onTriggerShutter = onTriggerShutter,
+                            isLandscape = true
+                        )
+                    }
+
+                    MainMenuTab.SAVE -> {
+                        SaveTabContent(
+                            context = context,
+                            coroutineScope = coroutineScope
+                        )
+                    }
+                }
+            }
         }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .background(Color.Black)
-        ) {
-            when (selectedTab) {
-                MainMenuTab.SETUP -> {
-                    SetupTabContent(
-                        isCamera2BurstActive = isCamera2BurstActive,
-                        currentStep = currentStep,
-                        capturedTestBitmap = capturedTestBitmap,
-                        selectedExposureSeconds = selectedExposureSeconds,
-                        isDropdownExpanded = isDropdownExpanded,
-                        isProcessing = isProcessing,
-                        statusMessage = statusMessage,
-                        multiTestResults = multiTestResults,
-                        selectedTestIso = selectedTestIso,
-                        onIsoSelect = { iso, bmp ->
-                            selectedTestIso = iso
-                            capturedTestBitmap = bmp
-                        },
-                        onExposureChange = { selectedExposureSeconds = it },
-                        onDropdownToggle = { isDropdownExpanded = it },
-                        onShutterClick = onTriggerShutter
-                    )
-                }
+    } else {
+        Scaffold(
+            bottomBar = {
+                NavigationBar(
+                    containerColor = Color(0xFF121212),
+                    contentColor = Color.White
+                ) {
+                    MainMenuTab.entries.forEach { tab ->
+                        val enabled = !isCamera2BurstActive && !isIntervalShootingActive && when (tab) {
+                            MainMenuTab.SETUP -> true
+                            MainMenuTab.INTERVAL -> isSetupCompleted
+                            MainMenuTab.SAVE -> isIntervalCompleted || hasExistingIntervalFiles
+                        }
 
-                MainMenuTab.INTERVAL -> {
-                    IntervalTabContent(
-                        isIntervalActive = isIntervalShootingActive,
-                        isCamera2BurstActive = isCamera2BurstActive,
-                        camera2BurstStatus = camera2BurstStatus,
-                        shotCount = shotCount,
-                        remainingShots = remainingShots,
-                        elapsedSeconds = elapsedSeconds,
-                        selectedExposureSeconds = selectedExposureSeconds,
-                        latestIntervalBitmap = latestIntervalBitmap,
-                        onTriggerShutter = onTriggerShutter
-                    )
+                        NavigationBarItem(
+                            selected = selectedTab == tab,
+                            enabled = enabled,
+                            onClick = {
+                                selectedTab = tab
+                                if (tab == MainMenuTab.SETUP) {
+                                    cancelSetup()
+                                }
+                            },
+                            label = {
+                                Text(
+                                    text = tab.label,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selectedTab == tab) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            icon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .background(
+                                            when {
+                                                selectedTab == tab -> Color(0xFF1E88E5)
+                                                enabled -> Color.LightGray
+                                                else -> Color.DarkGray
+                                            },
+                                            CircleShape
+                                        )
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Color(0xFF1E88E5),
+                                selectedTextColor = Color(0xFF1E88E5),
+                                unselectedIconColor = Color.Gray,
+                                unselectedTextColor = Color.Gray,
+                                disabledIconColor = Color.DarkGray,
+                                disabledTextColor = Color.DarkGray,
+                                indicatorColor = Color(0xFF1E88E5).copy(alpha = 0.2f)
+                            )
+                        )
+                    }
                 }
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .background(Color.Black)
+            ) {
+                when (selectedTab) {
+                    MainMenuTab.SETUP -> {
+                        SetupTabContent(
+                            isCamera2BurstActive = isCamera2BurstActive,
+                            currentStep = currentStep,
+                            capturedTestBitmap = capturedTestBitmap,
+                            selectedExposureSeconds = selectedExposureSeconds,
+                            isDropdownExpanded = isDropdownExpanded,
+                            isProcessing = isProcessing,
+                            statusMessage = statusMessage,
+                            multiTestResults = multiTestResults,
+                            selectedTestIso = selectedTestIso,
+                            onIsoSelect = { iso, bmp ->
+                                selectedTestIso = iso
+                                capturedTestBitmap = bmp
+                            },
+                            onExposureChange = { selectedExposureSeconds = it },
+                            onDropdownToggle = { isDropdownExpanded = it },
+                            onShutterClick = onTriggerShutter,
+                            isLandscape = false
+                        )
+                    }
 
-                MainMenuTab.SAVE -> {
-                    SaveTabContent(
-                        context = context,
-                        coroutineScope = coroutineScope
-                    )
+                    MainMenuTab.INTERVAL -> {
+                        IntervalTabContent(
+                            isIntervalActive = isIntervalShootingActive,
+                            isCamera2BurstActive = isCamera2BurstActive,
+                            camera2BurstStatus = camera2BurstStatus,
+                            shotCount = shotCount,
+                            remainingShots = remainingShots,
+                            elapsedSeconds = elapsedSeconds,
+                            selectedExposureSeconds = selectedExposureSeconds,
+                            latestIntervalBitmap = latestIntervalBitmap,
+                            onTriggerShutter = onTriggerShutter,
+                            isLandscape = false
+                        )
+                    }
+
+                    MainMenuTab.SAVE -> {
+                        SaveTabContent(
+                            context = context,
+                            coroutineScope = coroutineScope
+                        )
+                    }
                 }
             }
         }
@@ -783,11 +909,12 @@ private fun MainAppContent() {
 }
 
 /**
- * 縦位置での 4K, Full HD, HD クロップエリア枠線を同時に表示するガイドオーバーレイ（「上」「下」の向き表示を追加）
+ * クロップエリア枠線を同時に表示するガイドオーバーレイ（横画面時は「動画の上・下」ガイダンスなし、横向きアスペクト比に対応）
  */
 @Composable
 private fun PortraitCropGuidesOverlay(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isLandscape: Boolean = false
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val width = constraints.maxWidth.toFloat()
@@ -803,68 +930,87 @@ private fun PortraitCropGuidesOverlay(
             )
 
             scales.forEach { (scale, color, _) ->
-                val guideHeight = height * scale
-                val guideWidth = (guideHeight * 9f) / 16f
-                val left = (width - guideWidth) / 2f
-                val top = (height - guideHeight) / 2f
+                if (isLandscape) {
+                    val guideWidth = width * scale
+                    val guideHeight = (guideWidth * 9f) / 16f
+                    val left = (width - guideWidth) / 2f
+                    val top = (height - guideHeight) / 2f
 
-                drawRect(
-                    color = color,
-                    topLeft = Offset(left, top),
-                    size = Size(guideWidth, guideHeight),
-                    style = Stroke(
-                        width = 1.5.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                    drawRect(
+                        color = color,
+                        topLeft = Offset(left, top),
+                        size = Size(guideWidth, guideHeight),
+                        style = Stroke(
+                            width = 1.5.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                        )
                     )
-                )
+                } else {
+                    val guideHeight = height * scale
+                    val guideWidth = (guideHeight * 9f) / 16f
+                    val left = (width - guideWidth) / 2f
+                    val top = (height - guideHeight) / 2f
+
+                    drawRect(
+                        color = color,
+                        topLeft = Offset(left, top),
+                        size = Size(guideWidth, guideHeight),
+                        style = Stroke(
+                            width = 1.5.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                        )
+                    )
+                }
             }
         }
 
-        // タイムラプス動画変換時の上下方向インジケーター（左90度回転を考慮し右側が上、左側が下）
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
-            Surface(
-                color = Color.Black.copy(alpha = 0.7f),
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.align(Alignment.CenterEnd)
+        // 縦画面時のみ動画の上下方向インジケーターを表示（横画面では不要）
+        if (!isLandscape) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
             ) {
-                Text(
-                    text = "動画の\n【 上 】",
-                    color = Color(0xFF00E676),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
-                )
-            }
+                Surface(
+                    color = Color.Black.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                ) {
+                    Text(
+                        text = "動画の\n【 上 】",
+                        color = Color(0xFF00E676),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+                    )
+                }
 
-            Surface(
-                color = Color.Black.copy(alpha = 0.7f),
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.align(Alignment.CenterStart)
-            ) {
-                Text(
-                    text = "動画の\n【 下 】",
-                    color = Color(0xFFFF5252),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
-                )
+                Surface(
+                    color = Color.Black.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.align(Alignment.CenterStart)
+                ) {
+                    Text(
+                        text = "動画の\n【 下 】",
+                        color = Color(0xFFFF5252),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+                    )
+                }
             }
         }
 
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 80.dp),
+                .padding(top = if (isLandscape) 16.dp else 80.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "📏 縦位置クロップガイド (4K / Full HD / HD)",
+                text = if (isLandscape) "📏 クロップガイド (4K / Full HD / HD)" else "📏 縦位置クロップガイド (4K / Full HD / HD)",
                 color = Color.White,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold
@@ -891,11 +1037,12 @@ private fun SetupTabContent(
     onIsoSelect: (Int, Bitmap) -> Unit,
     onExposureChange: (Double) -> Unit,
     onDropdownToggle: (Boolean) -> Unit,
-    onShutterClick: () -> Unit
+    onShutterClick: () -> Unit,
+    isLandscape: Boolean = false
 ) {
     val latestSelectedTestIso = rememberUpdatedState(selectedTestIso)
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    val previewContent: @Composable () -> Unit = {
         if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
             Box(
                 modifier = Modifier
@@ -943,7 +1090,7 @@ private fun SetupTabContent(
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
                             .align(Alignment.TopCenter)
-                            .padding(top = 75.dp)
+                            .padding(top = 16.dp)
                     ) {
                         Text(
                             text = "ISO: $selectedTestIso (${currentIndex + 1}/${multiTestResults.size})",
@@ -974,146 +1121,216 @@ private fun SetupTabContent(
             CameraPreview(
                 modifier = Modifier.fillMaxSize()
             )
-            PortraitCropGuidesOverlay()
+            PortraitCropGuidesOverlay(isLandscape = isLandscape)
         }
+    }
 
-        // ヘッダーレイアウト（ステータス表示: 撮影前設定 ＆ 露出時間選択）
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .background(Color.Black.copy(alpha = 0.65f))
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+    val shutterButtonContent: @Composable () -> Unit = {
+        Button(
+            onClick = onShutterClick,
+            enabled = !isCamera2BurstActive || currentStep == WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST || currentStep == WorkflowStep.TEST_RESULT_DISPLAY || currentStep == WorkflowStep.DARK_FRAME_SHOOTING,
+            modifier = Modifier.size(72.dp),
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isProcessing) Color(0xFFD32F2F) else Color.Red
+            ),
+            contentPadding = PaddingValues(0.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+            if (isProcessing) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .background(Color.White, RoundedCornerShape(4.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .background(Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .background(Color.Red, CircleShape)
+                    )
+                }
+            }
+        }
+    }
+
+    val headerContent: @Composable () -> Unit = {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "撮影前設定",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            val isChangeable =
+                currentStep == WorkflowStep.DARK_FRAME_NOTICE || currentStep == WorkflowStep.POLARIS_ALIGNMENT_NOTICE
+
+            ExposedDropdownMenuBox(
+                expanded = isDropdownExpanded && isChangeable,
+                onExpandedChange = {
+                    if (isChangeable) onDropdownToggle(!isDropdownExpanded)
+                }
             ) {
-                Text(
-                    text = "撮影前設定",
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
+                OutlinedTextField(
+                    value = formatExposureSeconds(selectedExposureSeconds),
+                    onValueChange = {},
+                    readOnly = true,
+                    enabled = isChangeable,
+                    label = { Text("露出", color = Color.LightGray, fontSize = 9.sp) },
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded && isChangeable)
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        disabledTextColor = Color.LightGray,
+                        focusedBorderColor = Color(0xFF1E88E5),
+                        unfocusedBorderColor = Color.Gray,
+                        disabledBorderColor = Color.DarkGray,
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent
+                    ),
+                    modifier = Modifier
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                        .width(110.dp)
                 )
 
-                val isChangeable =
-                    currentStep == WorkflowStep.DARK_FRAME_NOTICE || currentStep == WorkflowStep.POLARIS_ALIGNMENT_NOTICE
-
-                ExposedDropdownMenuBox(
+                ExposedDropdownMenu(
                     expanded = isDropdownExpanded && isChangeable,
-                    onExpandedChange = {
-                        if (isChangeable) onDropdownToggle(!isDropdownExpanded)
-                    }
+                    onDismissRequest = { onDropdownToggle(false) }
                 ) {
-                    OutlinedTextField(
-                        value = formatExposureSeconds(selectedExposureSeconds),
-                        onValueChange = {},
-                        readOnly = true,
-                        enabled = isChangeable,
-                        label = { Text("露出時間", color = Color.LightGray, fontSize = 9.sp) },
-                        trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = isDropdownExpanded && isChangeable)
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            disabledTextColor = Color.LightGray,
-                            focusedBorderColor = Color(0xFF1E88E5),
-                            unfocusedBorderColor = Color.Gray,
-                            disabledBorderColor = Color.DarkGray,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent
-                        ),
-                        modifier = Modifier
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                            .width(125.dp)
-                    )
+                    EXPOSURE_TIMES_SECONDS.forEach { seconds ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    formatExposureSeconds(seconds),
+                                    color = Color.White
+                                )
+                            },
+                            onClick = {
+                                onExposureChange(seconds)
+                                onDropdownToggle(false)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
 
-                    ExposedDropdownMenu(
-                        expanded = isDropdownExpanded && isChangeable,
-                        onDismissRequest = { onDropdownToggle(false) }
-                    ) {
-                        EXPOSURE_TIMES_SECONDS.forEach { seconds ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        formatExposureSeconds(seconds),
-                                        color = Color.White
-                                    )
-                                },
-                                onClick = {
-                                    onExposureChange(seconds)
-                                    onDropdownToggle(false)
-                                }
+    if (isLandscape) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                previewContent()
+            }
+
+            Column(
+                modifier = Modifier
+                    .width(280.dp)
+                    .fillMaxHeight()
+                    .background(Color(0xFF121212))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    headerContent()
+
+                    if (currentStep != WorkflowStep.POLARIS_ALIGNMENT_NOTICE && statusMessage.isNotEmpty()) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = statusMessage,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp)
                             )
                         }
                     }
                 }
-            }
-        }
 
-        if (currentStep != WorkflowStep.POLARIS_ALIGNMENT_NOTICE && statusMessage.isNotEmpty()) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 120.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    text = statusMessage,
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp)
-                )
+                        .padding(bottom = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    shutterButtonContent()
+                }
             }
         }
+    } else {
+        Box(modifier = Modifier.fillMaxSize()) {
+            previewContent()
 
-        // シャッターボタン
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Button(
-                onClick = onShutterClick,
-                enabled = !isCamera2BurstActive || currentStep == WorkflowStep.POLARIS_TEST_SHOOTING_ADJUST || currentStep == WorkflowStep.TEST_RESULT_DISPLAY || currentStep == WorkflowStep.DARK_FRAME_SHOOTING,
-                modifier = Modifier.size(72.dp),
-                shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isProcessing) Color(0xFFD32F2F) else Color.Red
-                ),
-                contentPadding = PaddingValues(0.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .background(Color.Black.copy(alpha = 0.65f))
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
             ) {
-                if (isProcessing) {
-                    Box(
+                headerContent()
+            }
+
+            if (currentStep != WorkflowStep.POLARIS_ALIGNMENT_NOTICE && statusMessage.isNotEmpty()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 120.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = statusMessage,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .size(28.dp)
-                            .background(Color.White, RoundedCornerShape(4.dp))
+                            .fillMaxWidth()
+                            .padding(16.dp)
                     )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(60.dp)
-                            .background(Color.White, CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(52.dp)
-                                .background(Color.Red, CircleShape)
-                        )
-                    }
                 }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                shutterButtonContent()
             }
         }
     }
@@ -1132,9 +1349,10 @@ private fun IntervalTabContent(
     elapsedSeconds: Int,
     selectedExposureSeconds: Double,
     latestIntervalBitmap: Bitmap?,
-    onTriggerShutter: () -> Unit
+    onTriggerShutter: () -> Unit,
+    isLandscape: Boolean = false
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    val previewContent: @Composable () -> Unit = {
         if (latestIntervalBitmap != null) {
             Image(
                 bitmap = latestIntervalBitmap.asImageBitmap(),
@@ -1161,35 +1379,14 @@ private fun IntervalTabContent(
             CameraPreview(
                 modifier = Modifier.fillMaxSize()
             )
-            PortraitCropGuidesOverlay()
+            PortraitCropGuidesOverlay(isLandscape = isLandscape)
         }
+    }
 
-        // 最新撮影画像バッジ/インジケーター
-        if (latestIntervalBitmap != null) {
-            Surface(
-                color = Color.Black.copy(alpha = 0.6f),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 80.dp)
-            ) {
-                Text(
-                    text = "📷 撮影確認: ${shotCount}コマ目",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
-            }
-        }
-
-        // ヘッダー（2行目：撮影数の右に経過秒数を追加）
+    val headerContent: @Composable () -> Unit = {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .background(Color.Black.copy(alpha = 0.65f))
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1199,76 +1396,165 @@ private fun IntervalTabContent(
                 Text(
                     text = "インターバル撮影",
                     color = Color.White,
-                    fontSize = 17.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "露出時間: ${formatExposureSeconds(selectedExposureSeconds)}",
+                    text = "露出: ${formatExposureSeconds(selectedExposureSeconds)}",
                     color = Color.White,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     textAlign = TextAlign.End
                 )
             }
-            Spacer(modifier = Modifier.height(4.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "撮影数: ${shotCount}コマ  (経過: ${elapsedSeconds}秒)",
+                    text = "撮影: ${shotCount}コマ (${elapsedSeconds}秒)",
                     color = Color.White,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = "残り: 約${remainingShots}枚",
                     color = Color.White,
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.End
                 )
             }
         }
+    }
 
-        // シャッターボタン（停止マーク対応）
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp),
-            contentAlignment = Alignment.Center
+    val shutterButtonContent: @Composable () -> Unit = {
+        Button(
+            onClick = onTriggerShutter,
+            enabled = isIntervalActive || !isCamera2BurstActive,
+            modifier = Modifier.size(72.dp),
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (isIntervalActive) Color(0xFFD32F2F) else Color.Red
+            ),
+            contentPadding = PaddingValues(0.dp)
         ) {
-            Button(
-                onClick = onTriggerShutter,
-                enabled = isIntervalActive || !isCamera2BurstActive,
-                modifier = Modifier.size(72.dp),
-                shape = CircleShape,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isIntervalActive) Color(0xFFD32F2F) else Color.Red
-                ),
-                contentPadding = PaddingValues(0.dp)
-            ) {
-                if (isIntervalActive) {
+            if (isIntervalActive) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .background(Color.White, RoundedCornerShape(4.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .background(Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
                     Box(
                         modifier = Modifier
-                            .size(28.dp)
-                            .background(Color.White, RoundedCornerShape(4.dp))
+                            .size(52.dp)
+                            .background(Color.Red, CircleShape)
                     )
-                } else {
-                    Box(
+                }
+            }
+        }
+    }
+
+    if (isLandscape) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            ) {
+                previewContent()
+
+                if (latestIntervalBitmap != null) {
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
-                            .size(60.dp)
-                            .background(Color.White, CircleShape),
-                        contentAlignment = Alignment.Center
+                            .align(Alignment.TopCenter)
+                            .padding(top = 16.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(52.dp)
-                                .background(Color.Red, CircleShape)
+                        Text(
+                            text = "📷 撮影確認: ${shotCount}コマ目",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     }
                 }
+            }
+
+            Column(
+                modifier = Modifier
+                    .width(280.dp)
+                    .fillMaxHeight()
+                    .background(Color(0xFF121212))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                headerContent()
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    shutterButtonContent()
+                }
+            }
+        }
+    } else {
+        Box(modifier = Modifier.fillMaxSize()) {
+            previewContent()
+
+            if (latestIntervalBitmap != null) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 80.dp)
+                ) {
+                    Text(
+                        text = "📷 撮影確認: ${shotCount}コマ目",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .background(Color.Black.copy(alpha = 0.65f))
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                headerContent()
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                shutterButtonContent()
             }
         }
     }

@@ -1,6 +1,7 @@
 package jp.hisanet.astargazer.ui
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
@@ -17,11 +18,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -288,23 +294,20 @@ fun SaveTabContent(
         )
     }
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = Color.Black
-    ) {
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    val controlsContent: @Composable () -> Unit = {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // ヘッダー情報
             Text(
                 text = "仕上げ",
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
+                modifier = Modifier.padding(bottom = 4.dp)
             )
 
             // インターバル撮影回（セッション）選択プルダウン
@@ -368,11 +371,9 @@ fun SaveTabContent(
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // 出力モード選択（ドロップダウンメニュー）
+            // 出力モード選択
             ExposedDropdownMenuBox(
                 expanded = dropdownExpanded,
                 onExpandedChange = { if (!isGenerating) dropdownExpanded = !dropdownExpanded },
@@ -430,10 +431,8 @@ fun SaveTabContent(
                 }
             }
 
-            // タイムラプス時のフレームレート選択（天体に一般的な24fpsをデフォルトに設定）
+            // フレームレート選択
             if (selectedMode.isTimelapse) {
-                Spacer(modifier = Modifier.height(8.dp))
-
                 ExposedDropdownMenuBox(
                     expanded = frameRateDropdownExpanded,
                     onExpandedChange = { if (!isGenerating) frameRateDropdownExpanded = !frameRateDropdownExpanded },
@@ -501,8 +500,6 @@ fun SaveTabContent(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
             // コマ切り替えコントロールバー
             if (intervalFiles.isNotEmpty()) {
                 Row(
@@ -516,12 +513,12 @@ fun SaveTabContent(
                         },
                         enabled = !isGenerating,
                         shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                         border = BorderStroke(1.dp, Color.Gray),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        modifier = Modifier.height(34.dp)
+                        modifier = Modifier.height(32.dp)
                     ) {
-                        Text("◀ 前コマ", fontSize = 11.sp, color = Color.White)
+                        Text("◀ 前", fontSize = 11.sp, color = Color.White)
                     }
 
                     Text(
@@ -537,116 +534,15 @@ fun SaveTabContent(
                         },
                         enabled = !isGenerating,
                         shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                         border = BorderStroke(1.dp, Color.Gray),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        modifier = Modifier.height(34.dp)
+                        modifier = Modifier.height(32.dp)
                     ) {
-                        Text("次コマ ▶", fontSize = 11.sp, color = Color.White)
+                        Text("次 ▶", fontSize = 11.sp, color = Color.White)
                     }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // 2. プレビュー（コマ画像 ＋ クロップ枠線・ドラッグ移動機能）
-            BoxWithConstraints(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(Color.DarkGray, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                val boxWidth = constraints.maxWidth.toFloat()
-                val boxHeight = constraints.maxHeight.toFloat()
-
-                val rotatedBitmap = remember(currentBitmap) {
-                    if (currentBitmap != null) {
-                        val matrix = Matrix().apply { postRotate(270f) }
-                        Bitmap.createBitmap(
-                            currentBitmap,
-                            0, 0,
-                            currentBitmap.width, currentBitmap.height,
-                            matrix,
-                            true
-                        )
-                    } else {
-                        null
-                    }
-                }
-
-                if (rotatedBitmap != null && currentBitmap != null) {
-                    Image(
-                        bitmap = rotatedBitmap.asImageBitmap(),
-                        contentDescription = "元画像",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit
-                    )
-
-                    val rotWidth = currentBitmap.height.toFloat()
-                    val rotHeight = currentBitmap.width.toFloat()
-
-                    if (rotWidth > 0f && rotHeight > 0f && boxWidth > 0f && boxHeight > 0f) {
-                        val imgAspect = rotWidth / rotHeight
-                        val boxAspect = boxWidth / boxHeight
-
-                        val (displayedImgWidth, displayedImgHeight) = if (boxAspect > imgAspect) {
-                            (boxHeight * imgAspect) to boxHeight
-                        } else {
-                            boxWidth to (boxWidth / imgAspect)
-                        }
-
-                        val scale = when (selectedMode.resolutionLabel) {
-                            "HD (720p)" -> 0.60f
-                            "Full HD (1080p)" -> 0.75f
-                            "4K" -> 0.90f
-                            else -> 1.0f
-                        }
-
-                        val guideWidth = displayedImgWidth * scale
-                        val guideHeight = guideWidth * 9f / 16f
-
-                        val movableWidth = (displayedImgWidth - guideWidth).coerceAtLeast(0f)
-                        val movableHeight = (displayedImgHeight - guideHeight).coerceAtLeast(0f)
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(selectedMode, isGenerating, movableWidth, movableHeight) {
-                                    if (selectedMode.isTimelapse && !isGenerating) {
-                                        detectDragGestures { change, dragAmount ->
-                                            change.consume()
-                                            if (movableWidth > 0f) {
-                                                cropOffsetY = (cropOffsetY + dragAmount.x / movableWidth).coerceIn(0f, 1f)
-                                            }
-                                            if (movableHeight > 0f) {
-                                                cropOffsetX = (cropOffsetX - dragAmount.y / movableHeight).coerceIn(0f, 1f)
-                                            }
-                                        }
-                                    }
-                                }
-                        )
-
-                        // クロップ枠ガイドオーバーレイ（比較明合成時は非表示）
-                        SaveCropGuideOverlay(
-                            resolutionLabel = selectedMode.resolutionLabel,
-                            cropOffsetX = cropOffsetX,
-                            cropOffsetY = cropOffsetY,
-                            bitmapWidth = currentBitmap.width,
-                            bitmapHeight = currentBitmap.height
-                        )
-                    }
-                } else {
-                    Text(
-                        text = "元画像がありません\n(撮影回を選択してください)",
-                        color = Color.LightGray,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center
-                    )
                 }
             }
-
-            Spacer(modifier = Modifier.height(12.dp))
 
             // ステータスカード
             Card(
@@ -655,37 +551,35 @@ fun SaveTabContent(
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(12.dp),
+                    modifier = Modifier.padding(10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         text = statusMessage,
                         color = Color.White,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         textAlign = TextAlign.Center
                     )
 
                     if (isGenerating) {
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         LinearProgressIndicator(
                             progress = { progress },
                             modifier = Modifier.fillMaxWidth(),
                             color = Color(0xFF1E88E5),
                             trackColor = Color.Gray
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = "${(progress * 100).toInt()}% 完了",
                             color = Color.LightGray,
-                            fontSize = 12.sp
+                            fontSize = 11.sp
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 3. 仕上げボタン
+            // 仕上げボタン
             Button(
                 onClick = { executeExport() },
                 enabled = !isGenerating && intervalFiles.isNotEmpty(),
@@ -695,20 +589,18 @@ fun SaveTabContent(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp),
+                    .height(48.dp),
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Text(
                     text = if (selectedMode.isTimelapse) "🎬 ${selectedMode.label} を出力" else "🌌 ${selectedMode.label} を出力",
                     color = Color.White,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 削除ボタン（押下時に削除確認ダイアログを表示）
+            // 削除ボタン
             OutlinedButton(
                 onClick = { showDeleteDialog = true },
                 enabled = !isGenerating && sessions.isNotEmpty(),
@@ -718,15 +610,173 @@ fun SaveTabContent(
                 border = BorderStroke(1.dp, Color(0xFFFF5252)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp),
+                    .height(40.dp),
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Text(
                     text = "🗑️ 元画像を削除",
                     color = Color(0xFFFF5252),
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )
+            }
+        }
+    }
+
+    val previewBoxContent: @Composable () -> Unit = {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.DarkGray, RoundedCornerShape(12.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            val boxWidth = constraints.maxWidth.toFloat()
+            val boxHeight = constraints.maxHeight.toFloat()
+
+            val displayBitmap = remember(currentBitmap, isLandscape) {
+                if (currentBitmap != null) {
+                    if (isLandscape) {
+                        currentBitmap
+                    } else {
+                        val matrix = Matrix().apply { postRotate(270f) }
+                        Bitmap.createBitmap(
+                            currentBitmap,
+                            0, 0,
+                            currentBitmap.width, currentBitmap.height,
+                            matrix,
+                            true
+                        )
+                    }
+                } else {
+                    null
+                }
+            }
+
+            if (displayBitmap != null && currentBitmap != null) {
+                Image(
+                    bitmap = displayBitmap.asImageBitmap(),
+                    contentDescription = "元画像",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
+                )
+
+                val (rotWidth, rotHeight) = if (isLandscape) {
+                    currentBitmap.width.toFloat() to currentBitmap.height.toFloat()
+                } else {
+                    currentBitmap.height.toFloat() to currentBitmap.width.toFloat()
+                }
+
+                if (rotWidth > 0f && rotHeight > 0f && boxWidth > 0f && boxHeight > 0f) {
+                    val imgAspect = rotWidth / rotHeight
+                    val boxAspect = boxWidth / boxHeight
+
+                    val (displayedImgWidth, displayedImgHeight) = if (boxAspect > imgAspect) {
+                        (boxHeight * imgAspect) to boxHeight
+                    } else {
+                        boxWidth to (boxWidth / imgAspect)
+                    }
+
+                    val scale = when (selectedMode.resolutionLabel) {
+                        "HD (720p)" -> 0.60f
+                        "Full HD (1080p)" -> 0.75f
+                        "4K" -> 0.90f
+                        else -> 1.0f
+                    }
+
+                    val guideWidth = displayedImgWidth * scale
+                    val guideHeight = guideWidth * 9f / 16f
+
+                    val movableWidth = (displayedImgWidth - guideWidth).coerceAtLeast(0f)
+                    val movableHeight = (displayedImgHeight - guideHeight).coerceAtLeast(0f)
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(selectedMode, isGenerating, movableWidth, movableHeight) {
+                                if (selectedMode.isTimelapse && !isGenerating) {
+                                    detectDragGestures { change, dragAmount ->
+                                        change.consume()
+                                        if (movableWidth > 0f) {
+                                            cropOffsetY = (cropOffsetY + dragAmount.x / movableWidth).coerceIn(0f, 1f)
+                                        }
+                                        if (movableHeight > 0f) {
+                                            cropOffsetX = (cropOffsetX - dragAmount.y / movableHeight).coerceIn(0f, 1f)
+                                        }
+                                    }
+                                }
+                            }
+                    )
+
+                    SaveCropGuideOverlay(
+                        resolutionLabel = selectedMode.resolutionLabel,
+                        cropOffsetX = cropOffsetX,
+                        cropOffsetY = cropOffsetY,
+                        bitmapWidth = currentBitmap.width,
+                        bitmapHeight = currentBitmap.height,
+                        isLandscape = isLandscape
+                    )
+                }
+            } else {
+                Text(
+                    text = "元画像がありません\n(撮影回を選択してください)",
+                    color = Color.LightGray,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = Color.Black
+    ) {
+        if (isLandscape) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                ) {
+                    previewBoxContent()
+                }
+
+                Column(
+                    modifier = Modifier
+                        .width(320.dp)
+                        .fillMaxHeight()
+                        .background(Color(0xFF121212), RoundedCornerShape(12.dp))
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    controlsContent()
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                controlsContent()
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                ) {
+                    previewBoxContent()
+                }
             }
         }
     }
@@ -741,7 +791,8 @@ private fun SaveCropGuideOverlay(
     cropOffsetX: Float,
     cropOffsetY: Float,
     bitmapWidth: Int,
-    bitmapHeight: Int
+    bitmapHeight: Int,
+    isLandscape: Boolean = false
 ) {
     if (resolutionLabel == "最高画質") return
 
@@ -751,8 +802,11 @@ private fun SaveCropGuideOverlay(
 
         if (width <= 0f || height <= 0f || bitmapWidth <= 0 || bitmapHeight <= 0) return@BoxWithConstraints
 
-        val rotWidth = bitmapHeight.toFloat()
-        val rotHeight = bitmapWidth.toFloat()
+        val (rotWidth, rotHeight) = if (isLandscape) {
+            bitmapWidth.toFloat() to bitmapHeight.toFloat()
+        } else {
+            bitmapHeight.toFloat() to bitmapWidth.toFloat()
+        }
 
         val imgAspect = rotWidth / rotHeight
         val boxAspect = width / height
