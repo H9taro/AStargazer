@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1042,8 +1043,23 @@ private fun SetupTabContent(
 ) {
     val latestSelectedTestIso = rememberUpdatedState(selectedTestIso)
 
+    val displayCapturedBitmap = remember(capturedTestBitmap, isLandscape) {
+        if (capturedTestBitmap != null) {
+            val matrix = Matrix().apply { postRotate(270f) }
+            Bitmap.createBitmap(
+                capturedTestBitmap,
+                0, 0,
+                capturedTestBitmap.width, capturedTestBitmap.height,
+                matrix,
+                true
+            )
+        } else {
+            null
+        }
+    }
+
     val previewContent: @Composable () -> Unit = {
-        if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && capturedTestBitmap != null) {
+        if (currentStep == WorkflowStep.TEST_RESULT_DISPLAY && displayCapturedBitmap != null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1076,10 +1092,10 @@ private fun SetupTabContent(
                     }
             ) {
                 Image(
-                    bitmap = capturedTestBitmap.asImageBitmap(),
+                    bitmap = displayCapturedBitmap.asImageBitmap(),
                     contentDescription = "試写結果",
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
+                    contentScale = ContentScale.Fit
                 )
 
                 if (multiTestResults.size > 1) {
@@ -1352,13 +1368,28 @@ private fun IntervalTabContent(
     onTriggerShutter: () -> Unit,
     isLandscape: Boolean = false
 ) {
-    val previewContent: @Composable () -> Unit = {
+    val displayIntervalBitmap = remember(latestIntervalBitmap, isLandscape) {
         if (latestIntervalBitmap != null) {
+            val matrix = Matrix().apply { postRotate(270f) }
+            Bitmap.createBitmap(
+                latestIntervalBitmap,
+                0, 0,
+                latestIntervalBitmap.width, latestIntervalBitmap.height,
+                matrix,
+                true
+            )
+        } else {
+            null
+        }
+    }
+
+    val previewContent: @Composable () -> Unit = {
+        if (displayIntervalBitmap != null) {
             Image(
-                bitmap = latestIntervalBitmap.asImageBitmap(),
+                bitmap = displayIntervalBitmap.asImageBitmap(),
                 contentDescription = "直近のインターバル撮影画像",
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+                contentScale = ContentScale.Fit
             )
         } else if (isCamera2BurstActive) {
             Box(

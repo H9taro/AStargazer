@@ -635,18 +635,14 @@ fun SaveTabContent(
 
             val displayBitmap = remember(currentBitmap, isLandscape) {
                 if (currentBitmap != null) {
-                    if (isLandscape) {
-                        currentBitmap
-                    } else {
-                        val matrix = Matrix().apply { postRotate(270f) }
-                        Bitmap.createBitmap(
-                            currentBitmap,
-                            0, 0,
-                            currentBitmap.width, currentBitmap.height,
-                            matrix,
-                            true
-                        )
-                    }
+                    val matrix = Matrix().apply { postRotate(270f) }
+                    Bitmap.createBitmap(
+                        currentBitmap,
+                        0, 0,
+                        currentBitmap.width, currentBitmap.height,
+                        matrix,
+                        true
+                    )
                 } else {
                     null
                 }
@@ -660,11 +656,8 @@ fun SaveTabContent(
                     contentScale = ContentScale.Fit
                 )
 
-                val (rotWidth, rotHeight) = if (isLandscape) {
-                    currentBitmap.width.toFloat() to currentBitmap.height.toFloat()
-                } else {
-                    currentBitmap.height.toFloat() to currentBitmap.width.toFloat()
-                }
+                val rotWidth = currentBitmap.height.toFloat()
+                val rotHeight = currentBitmap.width.toFloat()
 
                 if (rotWidth > 0f && rotHeight > 0f && boxWidth > 0f && boxHeight > 0f) {
                     val imgAspect = rotWidth / rotHeight
@@ -802,11 +795,8 @@ private fun SaveCropGuideOverlay(
 
         if (width <= 0f || height <= 0f || bitmapWidth <= 0 || bitmapHeight <= 0) return@BoxWithConstraints
 
-        val (rotWidth, rotHeight) = if (isLandscape) {
-            bitmapWidth.toFloat() to bitmapHeight.toFloat()
-        } else {
-            bitmapHeight.toFloat() to bitmapWidth.toFloat()
-        }
+        val rotWidth = bitmapHeight.toFloat()
+        val rotHeight = bitmapWidth.toFloat()
 
         val imgAspect = rotWidth / rotHeight
         val boxAspect = width / height
