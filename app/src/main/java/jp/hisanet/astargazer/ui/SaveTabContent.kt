@@ -95,7 +95,16 @@ enum class ExportMode(
 @Composable
 fun SaveTabContent(
     context: Context,
-    coroutineScope: kotlinx.coroutines.CoroutineScope
+    coroutineScope: kotlinx.coroutines.CoroutineScope,
+    selectedTab: MainMenuTab = MainMenuTab.SAVE,
+    onTabSelected: (MainMenuTab) -> Unit = {},
+    isSetupCompleted: Boolean = false,
+    isIntervalCompleted: Boolean = false,
+    hasExistingIntervalFiles: Boolean = false,
+    isIntervalActive: Boolean = false,
+    isCamera2BurstActive: Boolean = false,
+    onCancelSetup: () -> Unit = {},
+    isLandscape: Boolean = false
 ) {
     var sessions by remember { mutableStateOf(StorageHelper.getIntervalSessions()) }
     var selectedSession by remember { mutableStateOf(sessions.firstOrNull()) }
@@ -302,13 +311,18 @@ fun SaveTabContent(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "仕上げ",
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
+            if (isLandscape) {
+                ScreenSwitchDropdown(
+                    selectedTab = selectedTab,
+                    onTabSelected = onTabSelected,
+                    isCamera2BurstActive = isCamera2BurstActive,
+                    isIntervalActive = isIntervalActive,
+                    isSetupCompleted = isSetupCompleted,
+                    isIntervalCompleted = isIntervalCompleted,
+                    hasExistingIntervalFiles = hasExistingIntervalFiles,
+                    onCancelSetup = onCancelSetup
+                )
+            }
 
             // インターバル撮影回（セッション）選択プルダウン
             if (sessions.isNotEmpty()) {
