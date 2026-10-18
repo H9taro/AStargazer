@@ -28,8 +28,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -42,9 +44,6 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -222,7 +221,6 @@ private fun PermissionRequestContent(onRequestPermission: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
 @Composable
 private fun MainAppContent() {
@@ -748,8 +746,7 @@ private fun MainAppContent() {
                         isSetupCompleted = isSetupCompleted,
                         isIntervalCompleted = isIntervalCompleted,
                         hasExistingIntervalFiles = hasExistingIntervalFiles,
-                        onCancelSetup = { cancelSetup() },
-                        isLandscape = true
+                        onCancelSetup = { cancelSetup() }
                     )
                 }
             }
@@ -1583,11 +1580,27 @@ private fun IntervalTabContent(
                     .width(280.dp)
                     .fillMaxHeight()
                     .background(Color(0xFF121212))
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.SpaceBetween,
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                headerContent()
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ScreenSwitchDropdown(
+                        selectedTab = selectedTab,
+                        onTabSelected = onTabSelected,
+                        isCamera2BurstActive = isCamera2BurstActive,
+                        isIntervalActive = isIntervalActive,
+                        isSetupCompleted = isSetupCompleted,
+                        isIntervalCompleted = isIntervalCompleted,
+                        hasExistingIntervalFiles = hasExistingIntervalFiles,
+                        onCancelSetup = onCancelSetup
+                    )
+                    headerContent()
+                }
 
                 Box(
                     modifier = Modifier

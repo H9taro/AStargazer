@@ -103,8 +103,7 @@ fun SaveTabContent(
     hasExistingIntervalFiles: Boolean = false,
     isIntervalActive: Boolean = false,
     isCamera2BurstActive: Boolean = false,
-    onCancelSetup: () -> Unit = {},
-    isLandscape: Boolean = false
+    onCancelSetup: () -> Unit = {}
 ) {
     var sessions by remember { mutableStateOf(StorageHelper.getIntervalSessions()) }
     var selectedSession by remember { mutableStateOf(sessions.firstOrNull()) }
@@ -714,14 +713,15 @@ fun SaveTabContent(
                             }
                     )
 
-                    SaveCropGuideOverlay(
-                        resolutionLabel = selectedMode.resolutionLabel,
-                        cropOffsetX = cropOffsetX,
-                        cropOffsetY = cropOffsetY,
-                        bitmapWidth = currentBitmap.width,
-                        bitmapHeight = currentBitmap.height,
-                        isLandscape = isLandscape
-                    )
+                    if (selectedMode.isTimelapse) {
+                        SaveCropGuideOverlay(
+                            resolutionLabel = selectedMode.resolutionLabel,
+                            cropOffsetX = cropOffsetX,
+                            cropOffsetY = cropOffsetY,
+                            bitmapWidth = currentBitmap.width,
+                            bitmapHeight = currentBitmap.height
+                        )
+                    }
                 }
             } else {
                 Text(
@@ -798,10 +798,9 @@ private fun SaveCropGuideOverlay(
     cropOffsetX: Float,
     cropOffsetY: Float,
     bitmapWidth: Int,
-    bitmapHeight: Int,
-    isLandscape: Boolean = false
+    bitmapHeight: Int
 ) {
-    if (resolutionLabel == "最高画質") return
+    if (resolutionLabel == "最高画質" || resolutionLabel == "比較明合成") return
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val width = constraints.maxWidth.toFloat()
