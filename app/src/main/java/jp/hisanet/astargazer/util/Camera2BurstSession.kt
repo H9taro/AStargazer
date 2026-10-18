@@ -211,6 +211,7 @@ class Camera2BurstSession private constructor(
                     }
 
                     override fun onDisconnected(camera: CameraDevice) {
+                        Log.d("BackgroundCapture", "Camera device disconnected")
                         camera.close()
                         if (continuation.isActive) {
                             continuation.resumeWithException(IllegalStateException("カメラ接続が切断されました"))
@@ -218,6 +219,7 @@ class Camera2BurstSession private constructor(
                     }
 
                     override fun onError(camera: CameraDevice, error: Int) {
+                        Log.d("BackgroundCapture", "Camera device error: $error")
                         camera.close()
                         if (continuation.isActive) {
                             continuation.resumeWithException(IllegalStateException("カメラを開けませんでした: error=$error"))
@@ -325,6 +327,7 @@ class Camera2BurstSession private constructor(
                         request: CaptureRequest,
                         failure: CaptureFailure
                     ) {
+                        Log.d("BackgroundCapture", "Camera capture failed: reason=${failure.reason}")
                         failContinuousCapture(
                             state,
                             IllegalStateException("Camera2 repeating capture failed: reason=${failure.reason}")
@@ -341,6 +344,7 @@ class Camera2BurstSession private constructor(
                     }
 
                     override fun onCaptureSequenceAborted(session: CameraCaptureSession, sequenceId: Int) {
+                        Log.d("BackgroundCapture", "Camera capture sequence aborted")
                         failContinuousCapture(state, IllegalStateException("Camera2 repeating capture was aborted"))
                     }
                 },
@@ -658,6 +662,7 @@ class Camera2BurstSession private constructor(
 
     override fun close() {
         if (!isClosed.compareAndSet(false, true)) return
+        Log.d("BackgroundCapture", "Camera2BurstSession closed")
         activeBatch?.completion?.completeExceptionally(IllegalStateException("Camera2セッションが閉じられました"))
         activeContinuous?.completion?.completeExceptionally(IllegalStateException("Camera2セッションが閉じられました"))
         captureSession.close()

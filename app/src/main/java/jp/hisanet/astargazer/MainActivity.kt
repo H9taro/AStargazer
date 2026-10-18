@@ -20,6 +20,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        Log.d("BackgroundCapture", "onStart")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d("BackgroundCapture", "onResume")
+    }
+
+    override fun onPause() {
+        super.onPause()
+        Log.d("BackgroundCapture", "onPause")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        Log.d("BackgroundCapture", "onStop")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d("BackgroundCapture", "onDestroy")
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         Log.d("OrientationDebug", "MainActivity onConfigurationChanged: orientation=${newConfig.orientation}")

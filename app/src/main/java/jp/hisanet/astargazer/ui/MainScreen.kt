@@ -359,11 +359,16 @@ private fun MainAppContent() {
                 val frames = session.stopRepeatingCapture()
                 shotCount = maxOf(shotCount, frames.size)
                 if (frames.isNotEmpty()) isIntervalCompleted = true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d("BackgroundCapture", "capture loop cancelled")
+                throw e
             } catch (exception: Exception) {
+                Log.d("BackgroundCapture", "capture loop error: ${exception.message}")
                 isIntervalShootingActive = false
                 statusMessage = "Camera2インターバル撮影エラー: ${exception.message}"
                 Log.e("IntervalPerf", "Camera2 interval capture failed", exception)
             } finally {
+                Log.d("BackgroundCapture", "capture loop finally block executed")
                 session?.close()
                 isIntervalShootingActive = false
                 isCamera2BurstActive = false
