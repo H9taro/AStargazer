@@ -57,6 +57,7 @@ Android launcher
 | `app/src/main/java/jp/hisanet/astargazer/util/StorageHelper.kt` | 撮影・書き出しファイルの配置、一覧、空き容量、複数ISOダークフレーム確認・一括削除 |
 | `app/src/main/java/jp/hisanet/astargazer/util/ImageCompositor.kt` | ダークフレーム減算と比較明合成 |
 | `app/src/main/java/jp/hisanet/astargazer/util/VideoEncoderHelper.kt` | 静止画列からの MP4 タイムラプス生成 |
+| `app/src/main/java/jp/hisanet/astargazer/util/ImageContrastAnalyzer.kt` | 試写画像の輝度コントラスト（標準偏差）解析による星像評価・スコア算出 |
 | `app/src/main/java/jp/hisanet/astargazer/util/ExifHelper.kt`、`LocationHelper.kt` | EXIF 撮影情報 / GPS 情報の読み書き、最終既知位置の取得 |
 | `app/src/main/java/jp/hisanet/astargazer/util/FileViewerHelper.kt` | Media Scanner 登録と生成物を外部ビューアで開く処理 |
 
@@ -131,9 +132,19 @@ AQUOS sense8 (SH-M26) において `CameraManager.getCameraIdList()` を呼び�
 
 ### ベンダー制限メカニズム (`vendor.camera.aux.packagelist`)
 
-- SHARP (AQUOS) や Sony (Xperia) 等の Qualcomm SoC 搭載 OEM 端末では、ベンダー独自のアクセスポリシープロパティ（`vendor.camera.aux.packagelist`）にホワイトリスト登録された公式カメラアプリ（`jp.co.sharp.android.camera` 等）以外の一般サードパーティアプリ（Open Camera, Camera FV-5, mcpro24fps, AStargazer 等）に対象サブカメラ ID（`2` 以降）へのアクセスを OS/HAL レベルで遮断する仕様となっている。
+- SHARP (AQUOS) や Sony (Xperia) 等の Qualcomm SoC 搭載 OEM 端末では、ベンダー独自のアクセスポリシープロパティ（`vendor.camera.aux.packagelist`）にホワイトリスト登録された公式カメラアプリ（`jp.co.sharp.android.camera` 等）以外の一般サードパーティアプリ（Open Camera, Camera FV-5, mcpro24fps, AStargazer 等）に対し、サブカメラ ID（`2` 以降）へのアクセスを OS/HAL レベルで遮断する仕様となっている。
 - `vendor.camera.aux.packagelist` はシステム保護プロパティであり、非 Root アプリケーション権限からの変更・バイパスは不可能である。
 - したがって、AQUOS sense8 等の端末では、標準 Camera2 / CameraX API を使用するサードパーティ製アプリから超広角カメラへアクセスすることはできない。
+
+## 将来実装予定
+
+### Foreground Service 化
+
+- **目的**: 画面ロック中もインターバル撮影を継続するため。
+- **現状**: インターバル撮影は `MainScreen` の `rememberCoroutineScope` 上で実行される。画面ロック時にアプリがバックグラウンド化し、`CameraDevice.StateCallback` の `ERROR_CAMERA_DISABLED (3)` により Camera2 セッションが強制終了する。
+- **将来**: 
+  - 撮影処理を `IntervalCaptureService` へ移設する。
+  - `foregroundServiceType="camera"` を利用し、`Camera2BurstSession` をサービスから直接制御する。
 
 ## 設計判断履歴
 
