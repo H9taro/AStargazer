@@ -58,6 +58,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -227,10 +228,10 @@ private fun MainAppContent() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var selectedTab by remember { mutableStateOf(MainMenuTab.SETUP) }
+    var selectedTab by rememberSaveable { mutableStateOf(MainMenuTab.SETUP) }
 
-    var isSetupCompleted by remember { mutableStateOf(false) }
-    var isIntervalCompleted by remember { mutableStateOf(false) }
+    var isSetupCompleted by rememberSaveable { mutableStateOf(false) }
+    var isIntervalCompleted by rememberSaveable { mutableStateOf(false) }
 
     // 前回の撮影画像ファイルがストレージに残っているかどうか
     val hasExistingIntervalFiles = remember { StorageHelper.getIntervalImageFiles().isNotEmpty() }
@@ -239,22 +240,22 @@ private fun MainAppContent() {
     var latestIntervalBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
 
-    var isIntervalShootingActive by remember { mutableStateOf(false) }
+    var isIntervalShootingActive by rememberSaveable { mutableStateOf(false) }
     var isCamera2BurstActive by remember { mutableStateOf(false) }
     var camera2BurstStatus by remember { mutableStateOf("") }
     var shotCount by remember { mutableIntStateOf(0) }
     var remainingShots by remember { mutableIntStateOf(0) }
     var elapsedSeconds by remember { mutableIntStateOf(0) }
 
-    var currentStep by remember { mutableStateOf(WorkflowStep.POLARIS_ALIGNMENT_NOTICE) }
+    var currentStep by rememberSaveable { mutableStateOf(WorkflowStep.POLARIS_ALIGNMENT_NOTICE) }
 
-    var selectedExposureSeconds by remember { mutableDoubleStateOf(4.0) }
+    var selectedExposureSeconds by rememberSaveable { mutableDoubleStateOf(4.0) }
     var isDropdownExpanded by remember { mutableStateOf(false) }
 
     var isTestShootingInterrupted by remember { mutableStateOf(false) }
     var activeTestSession by remember { mutableStateOf<Camera2BurstSession?>(null) }
     var multiTestResults by remember { mutableStateOf<List<Pair<Int, Bitmap>>>(emptyList()) }
-    var selectedTestIso by remember { mutableIntStateOf(400) }
+    var selectedTestIso by rememberSaveable { mutableIntStateOf(400) }
 
 
     var statusMessage by remember {
@@ -681,79 +682,9 @@ private fun MainAppContent() {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    if (isLandscape) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-        ) {
-            when (selectedTab) {
-                MainMenuTab.SETUP -> {
-                    SetupTabContent(
-                        isCamera2BurstActive = isCamera2BurstActive,
-                        currentStep = currentStep,
-                        capturedTestBitmap = capturedTestBitmap,
-                        selectedExposureSeconds = selectedExposureSeconds,
-                        isDropdownExpanded = isDropdownExpanded,
-                        isProcessing = isProcessing,
-                        statusMessage = statusMessage,
-                        multiTestResults = multiTestResults,
-                        selectedTestIso = selectedTestIso,
-                        onIsoSelect = { iso, bmp ->
-                            selectedTestIso = iso
-                            capturedTestBitmap = bmp
-                        },
-                        onExposureChange = { selectedExposureSeconds = it },
-                        onDropdownToggle = { isDropdownExpanded = it },
-                        onShutterClick = onTriggerShutter,
-                        isLandscape = true,
-                        selectedTab = selectedTab,
-                        onTabSelected = { selectedTab = it },
-                        isSetupCompleted = isSetupCompleted,
-                        isIntervalCompleted = isIntervalCompleted,
-                        hasExistingIntervalFiles = hasExistingIntervalFiles,
-                        onCancelSetup = { cancelSetup() }
-                    )
-                }
-
-                MainMenuTab.INTERVAL -> {
-                    IntervalTabContent(
-                        isIntervalActive = isIntervalShootingActive,
-                        isCamera2BurstActive = isCamera2BurstActive,
-                        camera2BurstStatus = camera2BurstStatus,
-                        shotCount = shotCount,
-                        remainingShots = remainingShots,
-                        elapsedSeconds = elapsedSeconds,
-                        selectedExposureSeconds = selectedExposureSeconds,
-                        latestIntervalBitmap = latestIntervalBitmap,
-                        onTriggerShutter = onTriggerShutter,
-                        isLandscape = true,
-                        selectedTab = selectedTab,
-                        onTabSelected = { selectedTab = it },
-                        isSetupCompleted = isSetupCompleted,
-                        isIntervalCompleted = isIntervalCompleted,
-                        hasExistingIntervalFiles = hasExistingIntervalFiles,
-                        onCancelSetup = { cancelSetup() }
-                    )
-                }
-
-                MainMenuTab.SAVE -> {
-                    SaveTabContent(
-                        context = context,
-                        coroutineScope = coroutineScope,
-                        selectedTab = selectedTab,
-                        onTabSelected = { selectedTab = it },
-                        isSetupCompleted = isSetupCompleted,
-                        isIntervalCompleted = isIntervalCompleted,
-                        hasExistingIntervalFiles = hasExistingIntervalFiles,
-                        onCancelSetup = { cancelSetup() }
-                    )
-                }
-            }
-        }
-    } else {
-        Scaffold(
-            bottomBar = {
+    Scaffold(
+        bottomBar = {
+            if (!isLandscape) {
                 NavigationBar(
                     containerColor = Color(0xFF121212),
                     contentColor = Color.White
@@ -808,57 +739,75 @@ private fun MainAppContent() {
                     }
                 }
             }
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .background(Color.Black)
-            ) {
-                when (selectedTab) {
-                    MainMenuTab.SETUP -> {
-                        SetupTabContent(
-                            isCamera2BurstActive = isCamera2BurstActive,
-                            currentStep = currentStep,
-                            capturedTestBitmap = capturedTestBitmap,
-                            selectedExposureSeconds = selectedExposureSeconds,
-                            isDropdownExpanded = isDropdownExpanded,
-                            isProcessing = isProcessing,
-                            statusMessage = statusMessage,
-                            multiTestResults = multiTestResults,
-                            selectedTestIso = selectedTestIso,
-                            onIsoSelect = { iso, bmp ->
-                                selectedTestIso = iso
-                                capturedTestBitmap = bmp
-                            },
-                            onExposureChange = { selectedExposureSeconds = it },
-                            onDropdownToggle = { isDropdownExpanded = it },
-                            onShutterClick = onTriggerShutter,
-                            isLandscape = false
-                        )
-                    }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(if (isLandscape) PaddingValues(0.dp) else innerPadding)
+                .background(Color.Black)
+        ) {
+            when (selectedTab) {
+                MainMenuTab.SETUP -> {
+                    SetupTabContent(
+                        isCamera2BurstActive = isCamera2BurstActive,
+                        currentStep = currentStep,
+                        capturedTestBitmap = capturedTestBitmap,
+                        selectedExposureSeconds = selectedExposureSeconds,
+                        isDropdownExpanded = isDropdownExpanded,
+                        isProcessing = isProcessing,
+                        statusMessage = statusMessage,
+                        multiTestResults = multiTestResults,
+                        selectedTestIso = selectedTestIso,
+                        onIsoSelect = { iso, bmp ->
+                            selectedTestIso = iso
+                            capturedTestBitmap = bmp
+                        },
+                        onExposureChange = { selectedExposureSeconds = it },
+                        onDropdownToggle = { isDropdownExpanded = it },
+                        onShutterClick = onTriggerShutter,
+                        isLandscape = isLandscape,
+                        selectedTab = selectedTab,
+                        onTabSelected = { selectedTab = it },
+                        isSetupCompleted = isSetupCompleted,
+                        isIntervalCompleted = isIntervalCompleted,
+                        hasExistingIntervalFiles = hasExistingIntervalFiles,
+                        onCancelSetup = { cancelSetup() }
+                    )
+                }
 
-                    MainMenuTab.INTERVAL -> {
-                        IntervalTabContent(
-                            isIntervalActive = isIntervalShootingActive,
-                            isCamera2BurstActive = isCamera2BurstActive,
-                            camera2BurstStatus = camera2BurstStatus,
-                            shotCount = shotCount,
-                            remainingShots = remainingShots,
-                            elapsedSeconds = elapsedSeconds,
-                            selectedExposureSeconds = selectedExposureSeconds,
-                            latestIntervalBitmap = latestIntervalBitmap,
-                            onTriggerShutter = onTriggerShutter,
-                            isLandscape = false
-                        )
-                    }
+                MainMenuTab.INTERVAL -> {
+                    IntervalTabContent(
+                        isIntervalActive = isIntervalShootingActive,
+                        isCamera2BurstActive = isCamera2BurstActive,
+                        camera2BurstStatus = camera2BurstStatus,
+                        shotCount = shotCount,
+                        remainingShots = remainingShots,
+                        elapsedSeconds = elapsedSeconds,
+                        selectedExposureSeconds = selectedExposureSeconds,
+                        latestIntervalBitmap = latestIntervalBitmap,
+                        onTriggerShutter = onTriggerShutter,
+                        isLandscape = isLandscape,
+                        selectedTab = selectedTab,
+                        onTabSelected = { selectedTab = it },
+                        isSetupCompleted = isSetupCompleted,
+                        isIntervalCompleted = isIntervalCompleted,
+                        hasExistingIntervalFiles = hasExistingIntervalFiles,
+                        onCancelSetup = { cancelSetup() }
+                    )
+                }
 
-                    MainMenuTab.SAVE -> {
-                        SaveTabContent(
-                            context = context,
-                            coroutineScope = coroutineScope
-                        )
-                    }
+                MainMenuTab.SAVE -> {
+                    SaveTabContent(
+                        context = context,
+                        coroutineScope = coroutineScope,
+                        selectedTab = selectedTab,
+                        onTabSelected = { selectedTab = it },
+                        isSetupCompleted = isSetupCompleted,
+                        isIntervalCompleted = isIntervalCompleted,
+                        hasExistingIntervalFiles = hasExistingIntervalFiles,
+                        onCancelSetup = { cancelSetup() }
+                    )
                 }
             }
         }

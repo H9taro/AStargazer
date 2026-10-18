@@ -43,12 +43,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -105,36 +107,55 @@ fun SaveTabContent(
     isCamera2BurstActive: Boolean = false,
     onCancelSetup: () -> Unit = {}
 ) {
+    DisposableEffect(Unit) {
+        Log.d("OrientationDebug", "SaveTabContent MOUNTED")
+        onDispose {
+            Log.d("OrientationDebug", "SaveTabContent UNMOUNTED")
+        }
+    }
+
+    val currentConfig = LocalConfiguration.current
+    LaunchedEffect(currentConfig.orientation) {
+        Log.d("OrientationDebug", "SaveTabContent orientation changed: orientation=${currentConfig.orientation}")
+    }
+
     var sessions by remember { mutableStateOf(StorageHelper.getIntervalSessions()) }
-    var selectedSession by remember { mutableStateOf(sessions.firstOrNull()) }
+    var selectedSessionPath by rememberSaveable { mutableStateOf(sessions.firstOrNull()?.absolutePath) }
+    var selectedSession by remember(sessions, selectedSessionPath) {
+        mutableStateOf(sessions.find { it.absolutePath == selectedSessionPath } ?: sessions.firstOrNull())
+    }
     
     // プレビュー表示する画像コマのインデックス
-    var currentImageIndex by remember { mutableIntStateOf(0) }
-    var intervalFiles by remember { mutableStateOf(StorageHelper.getIntervalImageFiles(selectedSession)) }
+    var currentImageIndex by rememberSaveable { mutableIntStateOf(0) }
+    var intervalFiles by remember(selectedSession) { mutableStateOf(StorageHelper.getIntervalImageFiles(selectedSession)) }
 
+    var previousSessionPath by remember { mutableStateOf(selectedSession?.absolutePath) }
     // 選択セッションが変更されたらファイルリストを再読み込み
-    LaunchedEffect(selectedSession) {
+    LaunchedEffect(selectedSession?.absolutePath) {
         intervalFiles = StorageHelper.getIntervalImageFiles(selectedSession)
-        currentImageIndex = 0
+        if (selectedSession?.absolutePath != previousSessionPath) {
+            previousSessionPath = selectedSession?.absolutePath
+            currentImageIndex = 0
+        }
     }
 
     var sessionDropdownExpanded by remember { mutableStateOf(false) }
-    var selectedMode by remember { mutableStateOf(ExportMode.FULLHD_TIMELAPSE) }
+    var selectedMode by rememberSaveable { mutableStateOf(ExportMode.FULLHD_TIMELAPSE) }
     var dropdownExpanded by remember { mutableStateOf(false) }
 
     // フレームレート選択 (デフォルト: 24 fps)
-    var selectedFrameRate by remember { mutableIntStateOf(24) }
+    var selectedFrameRate by rememberSaveable { mutableIntStateOf(24) }
     var frameRateDropdownExpanded by remember { mutableStateOf(false) }
 
     // クロップ位置（正規化オフセット: 0.0f = 左端/上端, 1.0f = 右端/下端）
-    var cropOffsetX by remember { mutableFloatStateOf(0.5f) }
-    var cropOffsetY by remember { mutableFloatStateOf(0.5f) }
+    var cropOffsetX by rememberSaveable { mutableFloatStateOf(0.5f) }
+    var cropOffsetY by rememberSaveable { mutableFloatStateOf(0.5f) }
 
     var isGenerating by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
     var showDeleteDialog by remember { mutableStateOf(false) }
 
-    var statusMessage by remember {
+    var statusMessage by remember(intervalFiles, selectedSession) {
         mutableStateOf(
             if (intervalFiles.isNotEmpty()) "元画像: ${intervalFiles.size}コマ (${selectedSession?.name ?: ""})"
             else "元画像がありません。"
@@ -252,7 +273,7 @@ fun SaveTabContent(
                                 val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull())
                                 withContext(Dispatchers.Main) {
                                     sessions = updatedSessions
-                                    selectedSession = updatedSessions.firstOrNull()
+                                    selectedSessionPath = updatedSessions.firstOrNull()?.absolutePath
                                     intervalFiles = updatedFiles
                                     currentImageIndex = 0
                                     statusMessage = if (success) "選択中の回の画像を削除しました。" else "一部の削除に失敗しました。"
@@ -274,7 +295,7 @@ fun SaveTabContent(
                                 val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull())
                                 withContext(Dispatchers.Main) {
                                     sessions = updatedSessions
-                                    selectedSession = updatedSessions.firstOrNull()
+                                    selectedSessionPath = updatedSessions.firstOrNull()?.absolutePath
                                     intervalFiles = updatedFiles
                                     currentImageIndex = 0
                                     statusMessage = if (success) "すべての回の元画像を削除しました。" else "一部の削除に失敗しました。"
@@ -377,7 +398,7 @@ fun SaveTabContent(
                                     )
                                 },
                                 onClick = {
-                                    selectedSession = session
+                                    selectedSessionPath = session.absolutePath
                                     sessionDropdownExpanded = false
                                 }
                             )

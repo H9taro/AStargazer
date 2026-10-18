@@ -1,6 +1,8 @@
 package jp.hisanet.astargazer
 
+import android.content.res.Configuration
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,5 +18,10 @@ class MainActivity : ComponentActivity() {
                 MainScreen()
             }
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.d("OrientationDebug", "MainActivity onConfigurationChanged: orientation=${newConfig.orientation}")
     }
 }
