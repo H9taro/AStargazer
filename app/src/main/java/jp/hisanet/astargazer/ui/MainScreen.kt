@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,6 +52,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -77,12 +79,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import jp.hisanet.astargazer.model.IntervalShootingState
 import jp.hisanet.astargazer.ui.camera.CameraControlManager
 import jp.hisanet.astargazer.ui.camera.CameraPreview
 import jp.hisanet.astargazer.util.Camera2BurstSession
 import jp.hisanet.astargazer.util.ExifHelper
 import jp.hisanet.astargazer.util.FileViewerHelper
 import jp.hisanet.astargazer.util.ImageContrastAnalyzer
+import jp.hisanet.astargazer.util.IntervalShootingManager
 import jp.hisanet.astargazer.util.LocationHelper
 import jp.hisanet.astargazer.util.StorageHelper
 import kotlinx.coroutines.Dispatchers
@@ -92,7 +96,6 @@ import kotlinx.coroutines.withContext
 import java.io.FileOutputStream
 import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * 露出時間の選択肢（秒数: 0.25秒, 0.5秒, 1秒, 2秒, 4秒, 8秒, 15秒, 30秒）
@@ -230,6 +233,9 @@ private fun MainAppContent() {
 
     var selectedTab by rememberSaveable { mutableStateOf(MainMenuTab.SETUP) }
 
+    val intervalState by IntervalShootingManager.state.collectAsState()
+    val isIntervalActive = intervalState !is IntervalShootingState.Idle && intervalState !is IntervalShootingState.Error
+
     var isSetupCompleted by rememberSaveable { mutableStateOf(false) }
     var isIntervalCompleted by rememberSaveable { mutableStateOf(false) }
 
@@ -240,7 +246,6 @@ private fun MainAppContent() {
     var latestIntervalBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
 
-    var isIntervalShootingActive by rememberSaveable { mutableStateOf(false) }
     var isCamera2BurstActive by remember { mutableStateOf(false) }
     var camera2BurstStatus by remember { mutableStateOf("") }
     var shotCount by remember { mutableIntStateOf(0) }
@@ -257,28 +262,66 @@ private fun MainAppContent() {
     var multiTestResults by remember { mutableStateOf<List<Pair<Int, Bitmap>>>(emptyList()) }
     var selectedTestIso by rememberSaveable { mutableIntStateOf(400) }
 
-
     var statusMessage by remember {
         mutableStateOf("")
     }
 
-    // インターバル撮影中の経過時間タイマー
-    LaunchedEffect(isIntervalShootingActive) {
-        if (isIntervalShootingActive) {
-            elapsedSeconds = 0
-            while (isIntervalShootingActive) {
-                delay(1.seconds)
-                elapsedSeconds++
+    // 通知権限ランチャー (Android 13+)
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val optimalIso = selectedTestIso
+            val baseLocation = LocationHelper.getLastKnownLocation(context)
+            IntervalShootingManager.startService(
+                context = context,
+                exposureSeconds = selectedExposureSeconds,
+                iso = optimalIso,
+                location = baseLocation
+            )
+        } else {
+            statusMessage = "通知権限が拒否されたため、インターバル撮影を開始できません。"
+        }
+    }
+
+    // サービスからの StateFlow 変化を UI に同期
+    LaunchedEffect(intervalState) {
+        when (val state = intervalState) {
+            is IntervalShootingState.Shooting -> {
+                shotCount = state.shotCount
+                remainingShots = state.remainingShots
+                elapsedSeconds = state.elapsedSeconds
+                isIntervalCompleted = true
+                if (state.latestImagePath != null) {
+                    withContext(Dispatchers.IO) {
+                        val bmp = BitmapFactory.decodeFile(state.latestImagePath)
+                        withContext(Dispatchers.Main) {
+                            if (bmp != null) {
+                                latestIntervalBitmap?.recycle()
+                                latestIntervalBitmap = bmp
+                            }
+                        }
+                    }
+                }
             }
+            is IntervalShootingState.Error -> {
+                statusMessage = "インターバル撮影エラー: ${state.message}"
+            }
+            is IntervalShootingState.Idle -> {
+                // アイドル時
+            }
+            else -> {}
         }
     }
 
     // 設定キャンセル・リセット
     fun cancelSetup() {
+        if (isIntervalActive) {
+            IntervalShootingManager.stopService(context)
+        }
         isProcessing = false
         isSetupCompleted = false
         isIntervalCompleted = false
-        isIntervalShootingActive = false
         elapsedSeconds = 0
         currentStep = WorkflowStep.POLARIS_ALIGNMENT_NOTICE
         capturedTestBitmap = null
@@ -289,95 +332,32 @@ private fun MainAppContent() {
         selectedTab = MainMenuTab.SETUP
     }
 
-    // インターバル撮影ループ
-    fun startIntervalShootingLoop() {
-        val initialStorageBytes = StorageHelper.getAvailableStorageBytes()
-        val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
-        var currentRemainingShots =
-            StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
-
-        val optimalIso = selectedTestIso
-        // インターバル開始時にGPS位置情報を1回だけ取得
-        val baseLocation = LocationHelper.getLastKnownLocation(context)
-        val exposureSeconds = selectedExposureSeconds
-
+    // インターバル撮影開始リクエスト (権限チェック込み)
+    fun requestStartIntervalShooting() {
         latestIntervalBitmap?.recycle()
         latestIntervalBitmap = null
-        isIntervalShootingActive = true
-        isCamera2BurstActive = false
-        camera2BurstStatus = "インターバル撮影を準備中..."
         shotCount = 0
         elapsedSeconds = 0
-        remainingShots = currentRemainingShots
 
-        Log.i(
-            "IntervalPerf",
-            ">>> START INTERVAL LOOP (Exposure: ${exposureSeconds}s, ISO: $optimalIso) <<<"
-        )
-
-        coroutineScope.launch {
-            var session: Camera2BurstSession? = null
-            try {
-                isCamera2BurstActive = true
-                camera2BurstStatus = "CameraXを解放してCamera2連続撮影を準備中..."
-                delay(500.milliseconds)
-                if (!isIntervalShootingActive) return@launch
-                session = Camera2BurstSession.open(
-                    context = context,
-                    exposureSeconds = exposureSeconds,
-                    iso = optimalIso,
-                    location = baseLocation
-                )
-
-                camera2BurstStatus = "インターバル撮影中..."
-                Log.i("IntervalPerf", "Camera2 session ready; starting repeating capture")
-                session.startRepeatingCapture(
-                    onFrameSaved = { frame ->
-                        coroutineScope.launch(Dispatchers.IO) {
-                            val bmp = BitmapFactory.decodeFile(frame.file.absolutePath)
-                            withContext(Dispatchers.Main) {
-                                if (bmp != null) {
-                                    latestIntervalBitmap?.recycle()
-                                    latestIntervalBitmap = bmp
-                                }
-                                shotCount = maxOf(shotCount, frame.index)
-                                currentRemainingShots = (currentRemainingShots - 1).coerceAtLeast(0)
-                                remainingShots = currentRemainingShots
-                                isIntervalCompleted = true
-                            }
-                        }
-                    },
-                    onFailure = { exception ->
-                        coroutineScope.launch(Dispatchers.Main) {
-                            isIntervalShootingActive = false
-                            statusMessage = "インターバル撮影エラー: ${exception.message}"
-                        }
-                    }
-                )
-
-                while (isIntervalShootingActive) delay(50.milliseconds)
-                val frames = session.stopRepeatingCapture()
-                shotCount = maxOf(shotCount, frames.size)
-                if (frames.isNotEmpty()) isIntervalCompleted = true
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                Log.d("BackgroundCapture", "capture loop cancelled")
-                throw e
-            } catch (exception: Exception) {
-                Log.d("BackgroundCapture", "capture loop error: ${exception.message}")
-                isIntervalShootingActive = false
-                statusMessage = "Camera2インターバル撮影エラー: ${exception.message}"
-                Log.e("IntervalPerf", "Camera2 interval capture failed", exception)
-            } finally {
-                Log.d("BackgroundCapture", "capture loop finally block executed")
-                session?.close()
-                isIntervalShootingActive = false
-                isCamera2BurstActive = false
-            }
-            Log.i(
-                "IntervalPerf",
-                ">>> STOP INTERVAL SHOOTING LOOP (Total captured: $shotCount frames) <<<"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val permissionCheck = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
             )
+            if (permissionCheck != PackageManager.PERMISSION_GRANTED) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return
+            }
         }
+
+        val optimalIso = selectedTestIso
+        val baseLocation = LocationHelper.getLastKnownLocation(context)
+        IntervalShootingManager.startService(
+            context = context,
+            exposureSeconds = selectedExposureSeconds,
+            iso = optimalIso,
+            location = baseLocation
+        )
     }
 
     fun finalizeSetup(targetIso: Int) {
@@ -544,13 +524,13 @@ private fun MainAppContent() {
                 }
 
                 MainMenuTab.INTERVAL -> {
-                    if (isIntervalShootingActive) {
-                        isIntervalShootingActive = false
-                        camera2BurstStatus =
+                    if (isIntervalActive) {
+                        IntervalShootingManager.stopService(context)
+                        statusMessage =
                             "停止要求を受け付けました。撮影中のコマを保存して停止します。"
                         if (shotCount > 0) isIntervalCompleted = true
                     } else {
-                        startIntervalShootingLoop()
+                        requestStartIntervalShooting()
                     }
                 }
 
@@ -695,7 +675,7 @@ private fun MainAppContent() {
                     contentColor = Color.White
                 ) {
                     MainMenuTab.entries.forEach { tab ->
-                        val enabled = !isCamera2BurstActive && !isIntervalShootingActive && when (tab) {
+                        val enabled = !isCamera2BurstActive && !isIntervalActive && when (tab) {
                             MainMenuTab.SETUP -> true
                             MainMenuTab.INTERVAL -> isSetupCompleted
                             MainMenuTab.SAVE -> isIntervalCompleted || hasExistingIntervalFiles
@@ -756,6 +736,7 @@ private fun MainAppContent() {
                 MainMenuTab.SETUP -> {
                     SetupTabContent(
                         isCamera2BurstActive = isCamera2BurstActive,
+                        isIntervalActive = isIntervalActive,
                         currentStep = currentStep,
                         capturedTestBitmap = capturedTestBitmap,
                         selectedExposureSeconds = selectedExposureSeconds,
@@ -783,7 +764,7 @@ private fun MainAppContent() {
 
                 MainMenuTab.INTERVAL -> {
                     IntervalTabContent(
-                        isIntervalActive = isIntervalShootingActive,
+                        isIntervalActive = isIntervalActive,
                         isCamera2BurstActive = isCamera2BurstActive,
                         camera2BurstStatus = camera2BurstStatus,
                         shotCount = shotCount,
@@ -1018,6 +999,7 @@ private fun PortraitCropGuidesOverlay(
 @Composable
 private fun SetupTabContent(
     isCamera2BurstActive: Boolean,
+    isIntervalActive: Boolean = false,
     currentStep: WorkflowStep,
     capturedTestBitmap: Bitmap?,
     selectedExposureSeconds: Double,
@@ -1115,7 +1097,7 @@ private fun SetupTabContent(
                     }
                 }
             }
-        } else if (isCamera2BurstActive) {
+        } else if (isCamera2BurstActive || isIntervalActive) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1123,7 +1105,7 @@ private fun SetupTabContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = statusMessage,
+                    text = if (isIntervalActive) "インターバル撮影中...\n(バックグラウンドで継続中)" else statusMessage,
                     color = Color.White,
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
@@ -1401,7 +1383,7 @@ private fun IntervalTabContent(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit
             )
-        } else if (isCamera2BurstActive) {
+        } else if (isCamera2BurstActive || isIntervalActive) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1409,7 +1391,7 @@ private fun IntervalTabContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = camera2BurstStatus,
+                    text = if (isIntervalActive) "インターバル撮影中...\n(バックグラウンドで継続中)" else camera2BurstStatus,
                     color = Color.White,
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,

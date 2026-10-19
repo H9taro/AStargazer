@@ -34,55 +34,63 @@ fun CameraPreview(
     DisposableEffect(lifecycleOwner) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         val executor = ContextCompat.getMainExecutor(context)
+        var isDisposed = false
 
-        val bindCamera: () -> Unit = {
-            try {
-                val cameraProvider = cameraProviderFuture.get()
-                cameraProvider.unbindAll()
+        val bindCamera = Runnable {
+            if (!isDisposed) {
+                try {
+                    val cameraProvider = cameraProviderFuture.get()
+                    cameraProvider.unbindAll()
 
-                val preview = Preview.Builder().build().also {
-                    it.surfaceProvider = previewView.surfaceProvider
-                }
-
-                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-                Log.i("Camera2Perf", "Preview bind start")
-                val camera = cameraProvider.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    preview
-                )
-                // ライブプレビュー表示は撮影条件とは完全に分離し、星の視認性を最大化する (0.25秒露光 & 最大ISO & 無限遠)
-                val usedMaxIso = applyStarVisibilitySettings(camera, context)
-                Log.i("CameraPreview", "CameraPreview applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=0.25s, Focus=0.0f")
-                Log.i("Camera2Perf", "Preview bind complete")
-            } catch (e: Exception) {
-                Log.e("CameraPreview", "Camera binding failed, retrying in 500ms...", e)
-                Handler(Looper.getMainLooper()).postDelayed({
-                    try {
-                        val cameraProvider = cameraProviderFuture.get()
-                        cameraProvider.unbindAll()
-                        val preview = Preview.Builder().build().also {
-                            it.surfaceProvider = previewView.surfaceProvider
-                        }
-                        val camera = cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
-                            preview
-                        )
-                        val usedMaxIso = applyStarVisibilitySettings(camera, context)
-                        Log.i("CameraPreview", "CameraPreview retry applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=0.25s, Focus=0.0f")
-                        Log.i("Camera2Perf", "Preview bind retry complete")
-                    } catch (retryEx: Exception) {
-                        Log.e("CameraPreview", "Camera binding retry failed", retryEx)
+                    val preview = Preview.Builder().build().also {
+                        it.surfaceProvider = previewView.surfaceProvider
                     }
-                }, 500)
+
+                    val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                    Log.i("Camera2Perf", "Preview bind start")
+                    val camera = cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        preview
+                    )
+                    // ライブプレビュー表示は撮影条件とは完全に分離し、星の視認性を最大化する (0.25秒露光 & 最大ISO & 無限遠)
+                    val usedMaxIso = applyStarVisibilitySettings(camera, context)
+                    Log.i("CameraPreview", "CameraPreview applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=0.25s, Focus=0.0f")
+                    Log.i("Camera2Perf", "Preview bind complete")
+                } catch (e: Exception) {
+                    Log.e("CameraPreview", "Camera binding failed, retrying in 500ms...", e)
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        if (!isDisposed) {
+                            try {
+                                val cameraProvider = cameraProviderFuture.get()
+                                cameraProvider.unbindAll()
+                                val preview = Preview.Builder().build().also {
+                                    it.surfaceProvider = previewView.surfaceProvider
+                                }
+                                val camera = cameraProvider.bindToLifecycle(
+                                    lifecycleOwner,
+                                    CameraSelector.DEFAULT_BACK_CAMERA,
+                                    preview
+                                )
+                                val usedMaxIso = applyStarVisibilitySettings(camera, context)
+                                Log.i("CameraPreview", "CameraPreview retry applied fixed star visibility settings: Max ISO=$usedMaxIso, Exposure=0.25s, Focus=0.0f")
+                                Log.i("Camera2Perf", "Preview bind retry complete")
+                            } catch (retryEx: Exception) {
+                                Log.e("CameraPreview", "Camera binding retry failed", retryEx)
+                            }
+                        }
+                    }, 500)
+                }
+            } else {
+                Log.i("CameraPreview", "Skipping bindCamera because CameraPreview is already disposed")
             }
         }
 
         cameraProviderFuture.addListener(bindCamera, executor)
 
         onDispose {
+            isDisposed = true
             try {
                 val cameraProvider = cameraProviderFuture.get()
                 cameraProvider.unbindAll()
