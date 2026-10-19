@@ -331,19 +331,6 @@ fun SaveTabContent(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (isLandscape) {
-                ScreenSwitchDropdown(
-                    selectedTab = selectedTab,
-                    onTabSelected = onTabSelected,
-                    isCamera2BurstActive = isCamera2BurstActive,
-                    isIntervalActive = isIntervalActive,
-                    isSetupCompleted = isSetupCompleted,
-                    isIntervalCompleted = isIntervalCompleted,
-                    hasExistingIntervalFiles = hasExistingIntervalFiles,
-                    onCancelSetup = onCancelSetup
-                )
-            }
-
             // インターバル撮影回（セッション）選択プルダウン
             if (sessions.isNotEmpty()) {
                 ExposedDropdownMenuBox(
@@ -784,6 +771,16 @@ fun SaveTabContent(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    ScreenSwitchDropdown(
+                        selectedTab = selectedTab,
+                        onTabSelected = onTabSelected,
+                        isCamera2BurstActive = isCamera2BurstActive,
+                        isIntervalActive = isIntervalActive,
+                        isSetupCompleted = isSetupCompleted,
+                        isIntervalCompleted = isIntervalCompleted,
+                        hasExistingIntervalFiles = hasExistingIntervalFiles,
+                        onCancelSetup = onCancelSetup
+                    )
                     controlsContent()
                 }
             }
@@ -796,8 +793,7 @@ fun SaveTabContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                controlsContent()
-
+                // 1. 画像の表示エリアを一番上に移動
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -805,6 +801,21 @@ fun SaveTabContent(
                 ) {
                     previewBoxContent()
                 }
+
+                // 2. 処理選択プルダウンはそのすぐ下に配置
+                ScreenSwitchDropdown(
+                    selectedTab = selectedTab,
+                    onTabSelected = onTabSelected,
+                    isCamera2BurstActive = isCamera2BurstActive,
+                    isIntervalActive = isIntervalActive,
+                    isSetupCompleted = isSetupCompleted,
+                    isIntervalCompleted = isIntervalCompleted,
+                    hasExistingIntervalFiles = hasExistingIntervalFiles,
+                    onCancelSetup = onCancelSetup
+                )
+
+                // 3. その他のコントロール
+                controlsContent()
             }
         }
     }
