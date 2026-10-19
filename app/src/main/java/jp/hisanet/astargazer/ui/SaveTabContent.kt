@@ -669,7 +669,7 @@ fun SaveTabContent(
 
             val displayBitmap = remember(currentBitmap, isLandscape) {
                 if (currentBitmap != null) {
-                    val matrix = Matrix().apply { postRotate(270f) }
+                    val matrix = Matrix().apply { postRotate(-90f) }
                     Bitmap.createBitmap(
                         currentBitmap,
                         0, 0,

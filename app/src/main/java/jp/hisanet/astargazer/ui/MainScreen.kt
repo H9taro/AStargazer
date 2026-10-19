@@ -1024,7 +1024,8 @@ private fun SetupTabContent(
 
     val displayCapturedBitmap = remember(capturedTestBitmap, isLandscape) {
         if (capturedTestBitmap != null) {
-            val matrix = Matrix().apply { postRotate(270f) }
+            val rotation = if (isLandscape) -90f else 0f
+            val matrix = Matrix().apply { postRotate(rotation) }
             Bitmap.createBitmap(
                 capturedTestBitmap,
                 0, 0,
@@ -1362,7 +1363,8 @@ private fun IntervalTabContent(
 ) {
     val displayIntervalBitmap = remember(latestIntervalBitmap, isLandscape) {
         if (latestIntervalBitmap != null) {
-            val matrix = Matrix().apply { postRotate(270f) }
+            val rotation = if (isLandscape) -90f else 0f
+            val matrix = Matrix().apply { postRotate(rotation) }
             Bitmap.createBitmap(
                 latestIntervalBitmap,
                 0, 0,
