@@ -85,8 +85,4 @@ object DeviceOrientationMonitor {
      */
     fun getDeviceOrientation(): Int = currentOrientationDegrees
 
-    /**
-     * 現在の本体向きおよびセンサー向きに応じた CaptureRequest.JPEG_ORIENTATION を返す
-     */
-    fun getJpegOrientation(sensorOrientation: Int): Int = computeJpegOrientation(sensorOrientation, currentOrientationDegrees)
 }

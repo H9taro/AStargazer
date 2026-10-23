@@ -235,8 +235,8 @@ private fun MainAppContent() {
     var isSetupCompleted by rememberSaveable { mutableStateOf(false) }
     var isIntervalCompleted by rememberSaveable { mutableStateOf(false) }
 
-    // 前回の撮影画像ファイルがストレージに残っているかどうか
-    val hasExistingIntervalFiles = remember { StorageHelper.getIntervalImageFiles().isNotEmpty() }
+    // 前回の撮影画像ファイルまたはインターバル撮影セッションディレクトリがストレージに残っているかどうか
+    val hasExistingIntervalFiles = StorageHelper.getIntervalSessions().isNotEmpty() || StorageHelper.getIntervalImageFiles().isNotEmpty()
 
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var latestIntervalBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -748,6 +748,7 @@ private fun MainAppContent() {
     }
 }
 
+@Suppress("UNUSED_PARAMETER")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenSwitchDropdown(
@@ -804,7 +805,7 @@ fun ScreenSwitchDropdown(
                 val enabled = !isCamera2BurstActive && !isIntervalActive && when (tab) {
                     MainMenuTab.SETUP -> true
                     MainMenuTab.INTERVAL -> isSetupCompleted
-                    MainMenuTab.SAVE -> isIntervalCompleted || hasExistingIntervalFiles
+                    MainMenuTab.SAVE -> true
                 }
 
                 DropdownMenuItem(
