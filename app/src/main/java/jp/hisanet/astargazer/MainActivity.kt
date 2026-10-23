@@ -8,10 +8,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import jp.hisanet.astargazer.ui.MainScreen
 import jp.hisanet.astargazer.ui.theme.AStargazerTheme
+import jp.hisanet.astargazer.util.DeviceOrientationMonitor
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DeviceOrientationMonitor.start(applicationContext)
         enableEdgeToEdge()
         setContent {
             AStargazerTheme {
@@ -41,6 +43,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        DeviceOrientationMonitor.stop()
         super.onDestroy()
         Log.d("BackgroundCapture", "onDestroy")
     }

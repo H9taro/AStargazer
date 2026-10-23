@@ -288,7 +288,9 @@ class Camera2BurstSession private constructor(
             set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
             set(CaptureRequest.SENSOR_SENSITIVITY, requestedIso)
             set(CaptureRequest.SENSOR_EXPOSURE_TIME, requestedExposureNs)
-            set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation)
+            val deviceRotation = DeviceOrientationMonitor.getDeviceOrientation()
+            val jpegOrientation = DeviceOrientationMonitor.computeJpegOrientation(sensorOrientation, deviceRotation)
+            set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation)
             set(CaptureRequest.JPEG_QUALITY, 95.toByte())
             setTag("continuous")
         }.build()
@@ -456,7 +458,9 @@ class Camera2BurstSession private constructor(
                 set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF)
                 set(CaptureRequest.SENSOR_SENSITIVITY, requestedIso)
                 set(CaptureRequest.SENSOR_EXPOSURE_TIME, requestedExposureNs)
-                set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation)
+                val deviceRotation = DeviceOrientationMonitor.getDeviceOrientation()
+                val jpegOrientation = DeviceOrientationMonitor.computeJpegOrientation(sensorOrientation, deviceRotation)
+                set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation)
                 set(CaptureRequest.JPEG_QUALITY, 95.toByte())
             }
             val requests = (0 until frameCount).map { offset ->
