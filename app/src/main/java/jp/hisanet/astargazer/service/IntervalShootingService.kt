@@ -117,7 +117,7 @@ class IntervalShootingService : Service() {
 
         IntervalShootingManager.updateState(IntervalShootingState.Preparing)
 
-        val initialStorageBytes = StorageHelper.getAvailableStorageBytes()
+        val initialStorageBytes = StorageHelper.getAvailableStorageBytes(applicationContext)
         val minAllowedStorageBytes = (initialStorageBytes * 0.5f).toLong()
         remainingShots = StorageHelper.calculateRemainingShots(initialStorageBytes, minAllowedStorageBytes)
         shotCount = 0

@@ -181,7 +181,8 @@ class Camera2BurstSession private constructor(
                     requestedExposureNs = requestedExposureNs,
                     requestedIso = actualRequestIso,
                     sensorOrientation = characteristics[CameraCharacteristics.SENSOR_ORIENTATION] ?: 0,
-                    location = location
+                    location = location,
+                    sessionDir = StorageHelper.getNextIntervalSessionDir(context)
                 ).also { s ->
                     s.jpegSize = jpegSize
                     imageReader.setOnImageAvailableListener(s::onImageAvailable, cameraHandler)

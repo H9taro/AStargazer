@@ -4,7 +4,7 @@
 
 ## アプリの概要
 
-AStargazer は星景撮影向けの単一モジュール Android アプリである。撮影前設定、手動露出での撮影、撮影画像からのタイムラプス動画または比較明合成画像の作成を提供する。画面状態と撮影ワークフローの制御は Compose UI 層に置かれている。
+AStargazer は星景撮影向けの単一モジュール Android アプリである。撮影前設定、手動露出での撮影、画面ロック中も継続する Foreground Service によるインターバル撮影、および撮影画像からのタイムラプス動画または比較明合成画像の作成を提供する。画面状態と撮影ワークフローの制御は Compose UI 層に置かれている。
 
 ## パッケージ名
 
@@ -26,7 +26,7 @@ AStargazer は星景撮影向けの単一モジュール Android アプリであ
 
 Compose BOM は `2026.09.00`。その他の主要依存は Activity Compose `1.13.0`、Lifecycle `2.11.0`、Core KTX `1.19.1`、JUnit `4.13.2`、AndroidX Test JUnit `1.3.0`、Espresso `3.7.0`。
 
-以下は現在の構成には含まれない: Room、MediaStore による保存、Hilt、Timber、FFmpegKit。ログ出力には Android の `Log` API を使用する。
+以下は現在の構成には含まれない: Room、Hilt、Timber、FFmpegKit。ログ出力には Android の `Log` API を使用する。
 
 ## モジュールと起動経路
 
@@ -37,24 +37,26 @@ Android launcher
   └─ MainActivity
       └─ AStargazerTheme
           └─ MainScreen
-              ├─ 権限確認・要求（カメラ、位置情報）
+              ├─ 権限確認・要求（カメラ、位置情報、外部ストレージ/メディア読込）
               └─ MainAppContent（画面状態と撮影ワークフローを管理）
                   ├─ 撮影前設定
-                  ├─ インターバル撮影
-                  └─ 仕上げ
+                  ├─ インターバル撮影 (IntervalShootingService によりバックグラウンド/画面ロック中も継続)
+                  └─ 仕上げ (保存場所選択・SDカード退避対応)
 ```
 
 主な実装ファイル:
 
 | ファイル | 責務 |
 |---|---|
-| `app/src/main/java/jp/hisanet/astargazer/MainActivity.kt` | アプリ起動、Edge-to-edge 設定、Compose コンテンツ設定 |
+| `app/src/main/java/jp/hisanet/astargazer/MainActivity.kt` | アプリ起動、Edge-to-edge 設定、Compose コンテンツ設定、DeviceOrientationMonitor ライフサイクル管理 |
 | `app/src/main/java/jp/hisanet/astargazer/ui/MainScreen.kt` | 権限ゲート、タブ切替、Compose 状態、撮影手順・撮影処理の制御 |
-| `app/src/main/java/jp/hisanet/astargazer/ui/SaveTabContent.kt` | 撮影画像プレビューと書き出し UI、画像クリア |
+| `app/src/main/java/jp/hisanet/astargazer/ui/SaveTabContent.kt` | 撮影画像プレビューと書き出し UI、ストレージ切替、SDカード退避、画像クリア |
 | `app/src/main/java/jp/hisanet/astargazer/ui/camera/CameraPreview.kt` | CameraX のプレビューをライフサイクルへバインド（無限遠ピント・露出時間・感度固定） |
 | `app/src/main/java/jp/hisanet/astargazer/ui/camera/CameraControlManager.kt` | 露出時間に応じた ISO 算出、Camera2 interop を介した撮影制御ヘルパー |
-| `app/src/main/java/jp/hisanet/astargazer/util/Camera2BurstSession.kt` | Camera2 の JPEG セッション、連続撮影、画像・撮影結果の保存 |
-| `app/src/main/java/jp/hisanet/astargazer/util/StorageHelper.kt` | 撮影・書き出しファイルの配置、一覧、空き容量、複数ISOダークフレーム確認・一括削除 |
+| `app/src/main/java/jp/hisanet/astargazer/service/IntervalShootingService.kt` | インターバル撮影用 Foreground Service（カメラ型FGS、画面ロック時も撮影継続） |
+| `app/src/main/java/jp/hisanet/astargazer/util/Camera2BurstSession.kt` | Camera2 の JPEG セッション、連続撮影、動的 JPEG 向き設定、画像保存 |
+| `app/src/main/java/jp/hisanet/astargazer/util/DeviceOrientationMonitor.kt` | 端末の物理的な向き（0度、90度、180度、270度）の常時監視 |
+| `app/src/main/java/jp/hisanet/astargazer/util/StorageHelper.kt` | 内部ストレージ・SDカード横断の Pictures/AStargazer 管理、セッション一覧、SDカード退避（移動） |
 | `app/src/main/java/jp/hisanet/astargazer/util/ImageCompositor.kt` | ダークフレーム減算と比較明合成 |
 | `app/src/main/java/jp/hisanet/astargazer/util/VideoEncoderHelper.kt` | 静止画列からの MP4 タイムラプス生成 |
 | `app/src/main/java/jp/hisanet/astargazer/util/ImageContrastAnalyzer.kt` | 試写画像の輝度コントラスト（標準偏差）解析による星像評価・スコア算出 |
@@ -65,7 +67,7 @@ Android launcher
 
 ### UI と状態管理
 
-`MainScreen` と `MainAppContent` が Compose の `remember` 状態および `LaunchedEffect` を用いて、選択タブ、設定手順（`WorkflowStep`: `POLARIS_ALIGNMENT_NOTICE`, `POLARIS_TEST_SHOOTING_ADJUST`, `TEST_RESULT_DISPLAY`, `DARK_FRAME_NOTICE`, `DARK_FRAME_SHOOTING`, `SETUP_COMPLETED`）、露出時間、撮影中フラグ、撮影数、進捗、ステータスメッセージを管理する。ボトムナビゲーションは「撮影前設定」「インターバル撮影」「仕上げ」の3画面を切り替える。専用の ViewModel や状態管理層はない。
+`MainScreen` と `MainAppContent` が Compose の `remember` 状態および `LaunchedEffect` を用いて、選択タブ、設定手順（`WorkflowStep`: `POLARIS_ALIGNMENT_NOTICE`, `POLARIS_TEST_SHOOTING_ADJUST`, `TEST_RESULT_DISPLAY`, `DARK_FRAME_NOTICE`, `DARK_FRAME_SHOOTING`, `SETUP_COMPLETED`）、露出時間、撮影中フラグ、撮影数、進捗、ステータスメッセージを管理する。ボトムナビゲーションおよびドロップダウンメニューは「撮影前設定」「インターバル撮影」「仕上げ」の各画面を切り替える。専用の ViewModel や状態管理層はない。
 
 ### カメラと撮影・ワークフロー
 
@@ -78,35 +80,30 @@ Android launcher
 - **カメラAPIの役割とライフサイクル**:
   - CameraX はプレビュー専用で、静止画取得には使用しない。プレビューは `CameraPreview` が `ProcessCameraProvider` を使って画面のライフサイクルへバインドする（無限遠ピント `0.0f`・露出時間・感度固定）。
   - 試写、ダークフレーム撮影、インターバル撮影はすべて `Camera2BurstSession` が `CameraManager`、`CameraDevice`、`CameraCaptureSession`、`ImageReader` を直接使用する。単発撮影には `captureSingleFrame()`、連続インターバル撮影には `startRepeatingCapture()` を使う。
+  - **動的 JPEG 向き補正**: `DeviceOrientationMonitor` が検出する端末の物理的な向き（0, 90, 180, 270度）とカメラセンサーの向き (`sensorOrientation`) を組み合わせて `CaptureRequest.JPEG_ORIENTATION` を動的に算出し、スマホを回転させて撮影した場合でも撮影結果画像が常に自然な正立（0度）になるようにしている。
+  - **Foreground Service 化**: インターバル撮影は `IntervalShootingService`（`foregroundServiceType="camera"`）によって実行され、画面ロック時やアプリがバックグラウンドに移行した場合でも中断されることなく連続撮影を継続する。
   - Camera2セッションを開く前にCameraXのユースケースを `unbindAll()` で解放する。Camera2セッションを閉じて撮影中状態を解除した後、画面がプレビュー状態になればCameraXのプレビューを再バインドする。
 
-### 仕上げと書き出し
+### 仕上げと書き出し・保存場所管理
 
 `SaveTabContent` は `StorageHelper` からインターバル撮影画像を読み、プレビューと出力モードを表示する。重い生成処理は `Dispatchers.IO` 上で実行される。「クリア」ボタンで撮影済み画像の一括削除が可能。
 
+- **保存場所の選択と SD カード退避**:
+  - 内部ストレージおよび SD カード双方の `Pictures/AStargazer` を横断してすべての撮影セッションを自動スキャンし一覧表示する。
+  - 仕上げ画面上から選択中のセッションをワンタップで SD カードへ安全に移動（退避）できる機能を提供する。
 - HD / Full HD / 4K タイムラプス: `VideoEncoderHelper` が各画像にダークフレーム減算、クロップ、回転、文字入れを行い、Android `MediaCodec` で AVC をエンコード、`MediaMuxer` で MP4 にする。
 - 最高画質の比較明合成: `ImageCompositor` が画像をダークフレーム減算し、Canvas の `PorterDuff.Mode.LIGHTEN` で合成、270度回転（タイムラプス動画と同じ向き）および長辺下側へのテロップ焼き込みを行って JPEG を出力する。
 - 出力後は Media Scanner に登録し、Google Files または利用可能な一般ビューアで開く。
-### 画像のローテーションと向きの制御
-
-CameraX のプレビュー（`PreviewView`）は画面の向きやデバイスの回転に応じて自動的に映像の向きを補正して表示する。一方、Camera2 等で撮影された静止画（試写画像、インターバル確認画像）および仕上げ画面の元画像はセンサーの向きのままのため、デバイスの向き（`isLandscape`）や画面状態に応じて適切な回転角を適用している。
-
-- **回転ルール**:
-  1. **横画面時 (`isLandscape = true`)**:
-     - すべての表示画像（撮影前設定の試写、インターバル撮影確認、仕上げ画面の元画像）: **反時計回り90度回転（`-90f`）**
-  2. **縦画面時 (`isLandscape = false`)**:
-     - 撮影前設定の試写画像・インターバル撮影確認画像: **回転なし（`0f`）**
-     - 仕上げ画面の元画像: **反時計回り90度回転（`-90f`）**
 
 ## ファイル保存とデータ
 
-アプリ内データベースや Room Entity はなく、画像・動画をファイルとして保存する。`StorageHelper` は従来の共有ストレージ公開ディレクトリ API と `File` を使う。
+アプリ内データベースや Room Entity はなく、画像・動画をファイルとして保存する。`StorageHelper` は従来の共有ストレージ公開ディレクトリ API と `File` を使う（内部ストレージおよび SD カードの `Pictures/AStargazer`）。
 
 ```text
 Pictures/AStargazer/
   DarkFrame/       ダークフレーム（個別名: dark_exp_{露出}s_iso_{ISO}.png）
   TestShooting/    試写画像（Test_ISO_{ISO}_{timestamp}.jpg）
-  Interval/        インターバル撮影画像（IMG_{index}_{timestamp}.jpg）
+  Interval_xxx/    インターバル撮影セッション画像（IMG_{index}_{timestamp}.jpg）
   Export/          比較明合成画像
 Movies/AStargazer/Export/
                    タイムラプス動画
@@ -142,19 +139,9 @@ AQUOS sense8 (SH-M26) において `CameraManager.getCameraIdList()` を呼び�
 
 ### ベンダー制限メカニズム (`vendor.camera.aux.packagelist`)
 
-- SHARP (AQUOS) や Sony (Xperia) 等の Qualcomm SoC 搭載 OEM 端末では、ベンダー独自のアクセスポリシープロパティ（`vendor.camera.aux.packagelist`）にホワイトリスト登録された公式カメラアプリ（`jp.co.sharp.android.camera` 等）以外の一般サードパーティアプリ（Open Camera, Camera FV-5, mcpro24fps, AStargazer 等）に対し、サブカメラ ID（`2` 以降）へのアクセスを OS/HAL レベルで遮断する仕様となっている。
+- SHARP (AQUOS) や Sony (Xperia) 等の Qualcomm SoC 搭載 OEM 端末では、ベンダー独自のアクセスポリシープロパティ（`vendor.camera.aux.packagelist`）にホワイトリスト登録された公式カメラアプリ（`jp.co.sharp.android.camera` 等）以外の一般サードパーティアプリ（Open Camera, Camera FV-5, mcpro24fps, AStargazer 等）に対象サブカメラ ID（`2` 以降）へのアクセスを OS/HAL レベルで遮断する仕様となっている。
 - `vendor.camera.aux.packagelist` はシステム保護プロパティであり、非 Root アプリケーション権限からの変更・バイパスは不可能である。
 - したがって、AQUOS sense8 等の端末では、標準 Camera2 / CameraX API を使用するサードパーティ製アプリから超広角カメラへアクセスすることはできない。
-
-## 将来実装予定
-
-### Foreground Service 化
-
-- **目的**: 画面ロック中もインターバル撮影を継続するため。
-- **現状**: インターバル撮影は `MainScreen` の `rememberCoroutineScope` 上で実行される。画面ロック時にアプリがバックグラウンド化し、`CameraDevice.StateCallback` の `ERROR_CAMERA_DISABLED (3)` により Camera2 セッションが強制終了する。
-- **将来**: 
-  - 撮影処理を `IntervalCaptureService` へ移設する。
-  - `foregroundServiceType="camera"` を利用し、`Camera2BurstSession` をサービスから直接制御する。
 
 ## 設計判断履歴
 

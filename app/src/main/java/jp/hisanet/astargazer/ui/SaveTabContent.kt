@@ -119,7 +119,7 @@ fun SaveTabContent(
         Log.d("OrientationDebug", "SaveTabContent orientation changed: orientation=${currentConfig.orientation}")
     }
 
-    var sessions by remember { mutableStateOf(StorageHelper.getIntervalSessions()) }
+    var sessions by remember { mutableStateOf(StorageHelper.getIntervalSessions(context)) }
     var selectedSessionPath by rememberSaveable { mutableStateOf(sessions.firstOrNull()?.absolutePath) }
     var selectedSession by remember(sessions, selectedSessionPath) {
         mutableStateOf(sessions.find { it.absolutePath == selectedSessionPath } ?: sessions.firstOrNull())
@@ -127,16 +127,31 @@ fun SaveTabContent(
     
     // プレビュー表示する画像コマのインデックス
     var currentImageIndex by rememberSaveable { mutableIntStateOf(0) }
-    var intervalFiles by remember(selectedSession) { mutableStateOf(StorageHelper.getIntervalImageFiles(selectedSession)) }
+    var intervalFiles by remember(selectedSession) { mutableStateOf(StorageHelper.getIntervalImageFiles(selectedSession, context)) }
 
     var previousSessionPath by remember { mutableStateOf(selectedSession?.absolutePath) }
-    // 選択セッションが変更されたらファイルリストを再読み込み
-    LaunchedEffect(selectedSession?.absolutePath) {
-        intervalFiles = StorageHelper.getIntervalImageFiles(selectedSession)
+    // 選択セッションまたはタブ切り替え時にファイルリスト・セッション一覧を再読み込み
+    LaunchedEffect(selectedSession?.absolutePath, selectedTab) {
+        val freshSessions = StorageHelper.getIntervalSessions(context)
+        sessions = freshSessions
+        if (selectedSessionPath == null || freshSessions.none { it.absolutePath == selectedSessionPath }) {
+            selectedSessionPath = freshSessions.firstOrNull()?.absolutePath
+        }
+        val currentSess = freshSessions.find { it.absolutePath == selectedSessionPath } ?: freshSessions.firstOrNull()
+        intervalFiles = StorageHelper.getIntervalImageFiles(currentSess, context)
         if (selectedSession?.absolutePath != previousSessionPath) {
             previousSessionPath = selectedSession?.absolutePath
             currentImageIndex = 0
         }
+        Log.i("SaveTabContent", "Refreshed SaveTabContent: sessions=${freshSessions.size}, currentSession=${currentSess?.name}, intervalFiles=${intervalFiles.size}")
+    }
+
+    val isSdCardAvailable = remember(context) { StorageHelper.getSdCardRoot(context) != null }
+    var showMoveDialog by remember { mutableStateOf(false) }
+    var isMovingSession by remember { mutableStateOf(false) }
+
+    val isSelectedSessionOnSdCard = remember(selectedSession, context, isSdCardAvailable) {
+        !(selectedSession == null || !isSdCardAvailable) && StorageHelper.getSdCardRoot(context)?.let { selectedSession?.absolutePath?.startsWith(it.absolutePath) } == true
     }
 
     var sessionDropdownExpanded by remember { mutableStateOf(false) }
@@ -268,9 +283,9 @@ fun SaveTabContent(
                         onClick = {
                             showDeleteDialog = false
                             coroutineScope.launch(Dispatchers.IO) {
-                                val success = StorageHelper.clearIntervalImages(selectedSession)
-                                val updatedSessions = StorageHelper.getIntervalSessions()
-                                val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull())
+                                val success = StorageHelper.clearIntervalImages(selectedSession, context)
+                                val updatedSessions = StorageHelper.getIntervalSessions(context)
+                                val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull(), context)
                                 withContext(Dispatchers.Main) {
                                     sessions = updatedSessions
                                     selectedSessionPath = updatedSessions.firstOrNull()?.absolutePath
@@ -290,9 +305,9 @@ fun SaveTabContent(
                         onClick = {
                             showDeleteDialog = false
                             coroutineScope.launch(Dispatchers.IO) {
-                                val success = StorageHelper.clearAllIntervalImages()
-                                val updatedSessions = StorageHelper.getIntervalSessions()
-                                val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull())
+                                val success = StorageHelper.clearAllIntervalImages(context)
+                                val updatedSessions = StorageHelper.getIntervalSessions(context)
+                                val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull(), context)
                                 withContext(Dispatchers.Main) {
                                     sessions = updatedSessions
                                     selectedSessionPath = updatedSessions.firstOrNull()?.absolutePath
@@ -319,6 +334,60 @@ fun SaveTabContent(
                 }
             },
             confirmButton = {},
+            containerColor = Color(0xFF2C2C2C)
+        )
+    }
+
+    // SDカードへ退避（移動）ダイアログ
+    if (showMoveDialog && selectedSession != null) {
+        AlertDialog(
+            onDismissRequest = { if (!isMovingSession) showMoveDialog = false },
+            title = { Text("💾 SDカードへの退避", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "選択中の回 (${selectedSession?.name}) の画像全コマを SDカードの Pictures/AStargazer へ移動しますか？\n（移動後も仕上げ画面で引き続き使用できます）",
+                        color = Color.LightGray,
+                        fontSize = 13.sp
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val targetSession = selectedSession ?: return@Button
+                        isMovingSession = true
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val success = StorageHelper.moveSessionToSdCard(context, targetSession)
+                            val updatedSessions = StorageHelper.getIntervalSessions(context)
+                            val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull(), context)
+                            withContext(Dispatchers.Main) {
+                                isMovingSession = false
+                                showMoveDialog = false
+                                sessions = updatedSessions
+                                selectedSessionPath = updatedSessions.firstOrNull()?.absolutePath
+                                intervalFiles = updatedFiles
+                                currentImageIndex = 0
+                                statusMessage = if (success) "SDカードへの退避が完了しました。" else "SDカードへの退避に失敗しました。"
+                            }
+                        }
+                    },
+                    enabled = !isMovingSession,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
+                ) {
+                    Text(if (isMovingSession) "移動中..." else "退避実行", color = Color.White)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showMoveDialog = false },
+                    enabled = !isMovingSession,
+                    border = BorderStroke(1.dp, Color.Gray),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) {
+                    Text("キャンセル", color = Color.White)
+                }
+            },
             containerColor = Color(0xFF2C2C2C)
         )
     }
@@ -373,9 +442,11 @@ fun SaveTabContent(
                         modifier = Modifier.background(Color(0xFF1E1E1E))
                     ) {
                         sessions.forEach { session ->
-                            val fileCount = StorageHelper.getIntervalImageFiles(session).size
+                            val fileCount = StorageHelper.getIntervalImageFiles(session, context).size
                             val isLatest = session == sessions.firstOrNull()
-                            val label = if (isLatest) "${session.name} (最新 - $fileCount コマ)" else "${session.name} ($fileCount コマ)"
+                            val isOnSd = isSdCardAvailable && StorageHelper.getSdCardRoot(context)?.let { session.absolutePath.startsWith(it.absolutePath) } == true
+                            val locTag = if (isOnSd) "[SDカード]" else "[内部]"
+                            val label = if (isLatest) "${session.name} (最新 - $fileCount コマ) $locTag" else "${session.name} ($fileCount コマ) $locTag"
                             DropdownMenuItem(
                                 text = {
                                     Text(
@@ -619,6 +690,26 @@ fun SaveTabContent(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
+            }
+
+            // SDカード退避ボタン
+            if (isSdCardAvailable && selectedSession != null && !isSelectedSessionOnSdCard) {
+                Button(
+                    onClick = { showMoveDialog = true },
+                    enabled = !isGenerating && !isMovingSession && intervalFiles.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0288D1)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = "💾 この回を SDカードへ退避",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             // 削除ボタン

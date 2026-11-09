@@ -134,17 +134,21 @@ enum class WorkflowStep {
 fun MainScreen() {
     val context = LocalContext.current
 
-    // パーミッション状態 (カメラ & 位置情報)
+    // パーミッション状態 (カメラ & 位置情報 & メディア読み込み)
     var hasPermissions by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.CAMERA
             ) == PackageManager.PERMISSION_GRANTED &&
-                    ContextCompat.checkSelfPermission(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED &&
+                    (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || ContextCompat.checkSelfPermission(
                         context,
-                        Manifest.permission.ACCESS_FINE_LOCATION
-                    ) == PackageManager.PERMISSION_GRANTED
+                        Manifest.permission.READ_MEDIA_IMAGES
+                    ) == PackageManager.PERMISSION_GRANTED)
         )
     }
 
@@ -153,30 +157,39 @@ fun MainScreen() {
     ) { permissions ->
         val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
         val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
-        hasPermissions = cameraGranted && locationGranted
+        val mediaGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || permissions[Manifest.permission.READ_MEDIA_IMAGES] ?: false
+        hasPermissions = cameraGranted && locationGranted && mediaGranted
     }
 
     LaunchedEffect(Unit) {
         if (!hasPermissions) {
-            permissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.CAMERA,
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
+            val perms = mutableListOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
             )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                perms.add(Manifest.permission.READ_MEDIA_IMAGES)
+            } else {
+                perms.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            permissionLauncher.launch(perms.toTypedArray())
         }
     }
 
     if (!hasPermissions) {
         PermissionRequestContent {
-            permissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.CAMERA,
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
+            val perms = mutableListOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
             )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                perms.add(Manifest.permission.READ_MEDIA_IMAGES)
+            } else {
+                perms.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+            permissionLauncher.launch(perms.toTypedArray())
         }
     } else {
         MainAppContent()
@@ -236,7 +249,7 @@ private fun MainAppContent() {
     var isIntervalCompleted by rememberSaveable { mutableStateOf(false) }
 
     // 前回の撮影画像ファイルまたはインターバル撮影セッションディレクトリがストレージに残っているかどうか
-    val hasExistingIntervalFiles = StorageHelper.getIntervalSessions().isNotEmpty() || StorageHelper.getIntervalImageFiles().isNotEmpty()
+    val hasExistingIntervalFiles = StorageHelper.getIntervalSessions(context).isNotEmpty() || StorageHelper.getIntervalImageFiles(context = context).isNotEmpty()
 
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var latestIntervalBitmap by remember { mutableStateOf<Bitmap?>(null) }
