@@ -155,7 +155,7 @@ fun SaveTabContent(
     }
 
     var sessionDropdownExpanded by remember { mutableStateOf(false) }
-    var selectedMode by rememberSaveable { mutableStateOf(ExportMode.FULLHD_TIMELAPSE) }
+    var selectedMode by rememberSaveable { mutableStateOf(ExportMode.UHD_4K_TIMELAPSE) }
     var dropdownExpanded by remember { mutableStateOf(false) }
 
     // フレームレート選択 (デフォルト: 24 fps)
