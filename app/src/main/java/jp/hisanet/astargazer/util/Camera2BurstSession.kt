@@ -52,7 +52,7 @@ class Camera2BurstSession private constructor(
     private val requestedIso: Int,
     private val sensorOrientation: Int,
     private val location: android.location.Location?,
-    val sessionDir: File = StorageHelper.getNextIntervalSessionDir()
+    val sessionDir: File? = null
 ) : AutoCloseable {
     private class BatchState(
         val count: Int,
@@ -117,7 +117,8 @@ class Camera2BurstSession private constructor(
             context: Context,
             exposureSeconds: Double,
             iso: Int,
-            location: android.location.Location? = null
+            location: android.location.Location? = null,
+            createSessionDir: Boolean = false
         ): Camera2BurstSession = withContext(Dispatchers.IO) {
             val openStartTime = System.currentTimeMillis()
             Log.i("Camera2Perf", "Camera2BurstSession.open開始")
@@ -182,7 +183,7 @@ class Camera2BurstSession private constructor(
                     requestedIso = actualRequestIso,
                     sensorOrientation = characteristics[CameraCharacteristics.SENSOR_ORIENTATION] ?: 0,
                     location = location,
-                    sessionDir = StorageHelper.getNextIntervalSessionDir(context)
+                    sessionDir = if (createSessionDir) StorageHelper.getNextIntervalSessionDir(context) else null
                 ).also { s ->
                     s.jpegSize = jpegSize
                     imageReader.setOnImageAvailableListener(s::onImageAvailable, cameraHandler)

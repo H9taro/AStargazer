@@ -226,17 +226,20 @@ object StorageHelper {
 
     /**
      * 存在するすべてのインターバル撮影セッションディレクトリのリストを取得する（内部ストレージ・SDカードの Pictures/AStargazer）
+     * ※ 画像ファイルが1コマ以上存在する有効なセッションディレクトリのみを抽出（空のディレクトリを除外）
      */
     fun getIntervalSessions(context: Context? = null): List<File> {
         val sessions = mutableListOf<File>()
 
         fun scanParent(parentDir: File) {
             if (!parentDir.exists() || !parentDir.isDirectory) return
-            parentDir.listFiles { file -> file.isDirectory && file.name.startsWith("Interval_") }?.let {
-                sessions.addAll(it)
+            parentDir.listFiles { file -> file.isDirectory && file.name.startsWith("Interval_") }?.let { dirs ->
+                dirs.filter { dir -> getIntervalImageFiles(dir, context).isNotEmpty() }.let { validDirs ->
+                    sessions.addAll(validDirs)
+                }
             }
             val legacyDir = File(parentDir, "Interval")
-            if (legacyDir.exists() && legacyDir.isDirectory && !sessions.contains(legacyDir)) {
+            if (legacyDir.exists() && legacyDir.isDirectory && getIntervalImageFiles(legacyDir, context).isNotEmpty() && !sessions.contains(legacyDir)) {
                 sessions.add(legacyDir)
             }
         }

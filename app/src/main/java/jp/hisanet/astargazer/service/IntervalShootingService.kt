@@ -144,7 +144,8 @@ class IntervalShootingService : Service() {
                     context = applicationContext,
                     exposureSeconds = exposureSeconds,
                     iso = iso,
-                    location = location
+                    location = location,
+                    createSessionDir = true
                 )
                 burstSession = session
                 Log.i(TAG, "Camera2 session opened")
