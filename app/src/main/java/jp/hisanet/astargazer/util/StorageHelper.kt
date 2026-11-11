@@ -15,6 +15,11 @@ enum class StorageTarget {
     SD_CARD
 }
 
+data class SessionCameraParams(
+    val exposureSeconds: Double,
+    val iso: Int
+)
+
 object StorageHelper {
 
     // 1コマ（非圧縮静止画1枚）あたりの推定ファイルサイズ (PNG非圧縮時は約15〜20MB)
@@ -123,6 +128,27 @@ object StorageHelper {
             "dark_frame.png"
         }
         return File(dir, filename)
+    }
+
+    /**
+     * 選択中セッションの先頭画像の EXIF (露出時間・ISO感度) を取得する
+     */
+    fun getSessionCameraParams(sessionDir: File?, context: Context? = null): SessionCameraParams? {
+        val files = getIntervalImageFiles(sessionDir, context)
+        val firstFile = files.firstOrNull() ?: return null
+        try {
+            val exif = ExifInterface(firstFile.absolutePath)
+            val exposureStr = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)
+            val isoStr = exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)
+                ?: exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS)
+
+            val exposureSeconds = exposureStr?.toDoubleOrNull() ?: return null
+            val iso = isoStr?.toIntOrNull() ?: return null
+            return SessionCameraParams(exposureSeconds, iso)
+        } catch (e: Exception) {
+            Log.e("StorageHelper", "Failed to read EXIF params from ${firstFile.name}", e)
+            return null
+        }
     }
 
     fun getDarkFrameCaptureTempFile(context: Context): File {

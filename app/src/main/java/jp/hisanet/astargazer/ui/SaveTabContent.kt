@@ -100,6 +100,7 @@ fun SaveTabContent(
     coroutineScope: kotlinx.coroutines.CoroutineScope,
     selectedTab: MainMenuTab = MainMenuTab.SAVE,
     onTabSelected: (MainMenuTab) -> Unit = {},
+    onNavigateToDarkFrameShooting: (exposureSeconds: Double, iso: Int) -> Unit = { _, _ -> },
     isSetupCompleted: Boolean = false,
     isIntervalCompleted: Boolean = false,
     hasExistingIntervalFiles: Boolean = false,
@@ -169,6 +170,8 @@ fun SaveTabContent(
     var isGenerating by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showMissingDarkFrameDialog by remember { mutableStateOf(false) }
+    var missingParams by remember { mutableStateOf<jp.hisanet.astargazer.util.SessionCameraParams?>(null) }
 
     var statusMessage by remember(intervalFiles, selectedSession) {
         mutableStateOf(
@@ -222,12 +225,26 @@ fun SaveTabContent(
     // 保存処理の実行
     fun executeExport() {
         if (intervalFiles.isEmpty()) return
+
+        // 選択中セッションの撮影条件 (EXIF) から必要ダークフレームを取得
+        val sessionParams = StorageHelper.getSessionCameraParams(selectedSession, context)
+        if (sessionParams == null) {
+            statusMessage = "セッション画像の EXIF (露出時間・ISO感度) を読み込めませんでした。"
+            return
+        }
+
+        val darkFrameFile = StorageHelper.getDarkFrameFile(sessionParams.exposureSeconds, sessionParams.iso, context)
+        if (!darkFrameFile.exists() || darkFrameFile.length() == 0L) {
+            missingParams = sessionParams
+            showMissingDarkFrameDialog = true
+            return
+        }
+
         isGenerating = true
         progress = 0f
         statusMessage = "${selectedMode.label} を生成中..."
 
         coroutineScope.launch(Dispatchers.IO) {
-            val darkFrameFile = StorageHelper.getDarkFrameFile()
             val success: Boolean
             val outputFile: File
 
@@ -236,7 +253,7 @@ fun SaveTabContent(
                 success = VideoEncoderHelper.createTimelapseVideo(
                     imageFiles = intervalFiles,
                     outputFile = outputFile,
-                    darkFrameFile = darkFrameFile.exists().let { if (it) darkFrameFile else null },
+                    darkFrameFile = darkFrameFile,
                     resolutionLabel = selectedMode.resolutionLabel,
                     frameRate = selectedFrameRate,
                     cropOffsetX = cropOffsetX,
@@ -248,7 +265,7 @@ fun SaveTabContent(
                 success = ImageCompositor.createLightenBlendComposite(
                     imageFiles = intervalFiles,
                     outputFile = outputFile,
-                    darkFrameFile = darkFrameFile.exists().let { if (it) darkFrameFile else null },
+                    darkFrameFile = darkFrameFile,
                     onProgress = { p -> progress = p }
                 )
             }
@@ -334,6 +351,43 @@ fun SaveTabContent(
                 }
             },
             confirmButton = {},
+            containerColor = Color(0xFF2C2C2C)
+        )
+    }
+
+    // ダークフレーム未検出ダイアログ
+    if (showMissingDarkFrameDialog && missingParams != null) {
+        val params = missingParams!!
+        AlertDialog(
+            onDismissRequest = { showMissingDarkFrameDialog = false },
+            title = { Text("⚠️ ダークフレーム撮影が必要です", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = "このセッションに対応するダークフレームが見つかりません。\n\n【必要条件】\n露出：${params.exposureSeconds}秒\nISO：${params.iso}\n\nダークフレームを撮影してください。",
+                    color = Color.LightGray,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showMissingDarkFrameDialog = false
+                        onNavigateToDarkFrameShooting(params.exposureSeconds, params.iso)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
+                ) {
+                    Text("ダークフレーム撮影へ", color = Color.White)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showMissingDarkFrameDialog = false },
+                    border = BorderStroke(1.dp, Color.Gray),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) {
+                    Text("キャンセル", color = Color.White)
+                }
+            },
             containerColor = Color(0xFF2C2C2C)
         )
     }

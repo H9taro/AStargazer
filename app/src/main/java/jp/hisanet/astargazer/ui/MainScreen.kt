@@ -268,6 +268,7 @@ private fun MainAppContent() {
 
     var isTestShootingInterrupted by remember { mutableStateOf(false) }
     var activeTestSession by remember { mutableStateOf<Camera2BurstSession?>(null) }
+    var returnTabAfterDarkFrame by rememberSaveable { mutableStateOf<MainMenuTab?>(null) }
     var multiTestResults by remember { mutableStateOf<List<Pair<Int, Bitmap>>>(emptyList()) }
     var selectedTestIso by rememberSaveable { mutableIntStateOf(400) }
 
@@ -462,8 +463,16 @@ private fun MainAppContent() {
                 FileViewerHelper.scanFile(context, darkFrameFile)
 
                 statusMessage = "ダークフレーム撮影完了。レンズカバーを外してください。"
-                delay(300.milliseconds)
-                finalizeSetup(targetIso)
+                delay(500.milliseconds)
+                isProcessing = false
+                isCamera2BurstActive = false
+                if (returnTabAfterDarkFrame == MainMenuTab.SAVE) {
+                    returnTabAfterDarkFrame = null
+                    selectedTab = MainMenuTab.SAVE
+                    statusMessage = "ダークフレーム撮影完了。仕上げを再開できます。"
+                } else {
+                    finalizeSetup(targetIso)
+                }
             } catch (exception: Exception) {
                 Log.e("MainScreen", "Dark frame capture failed", exception)
                 statusMessage = "ダークフレーム撮影エラー: ${exception.message}"
@@ -751,6 +760,14 @@ private fun MainAppContent() {
                     coroutineScope = coroutineScope,
                     selectedTab = selectedTab,
                     onTabSelected = { selectedTab = it },
+                    onNavigateToDarkFrameShooting = { sessionExposure, sessionIso ->
+                        selectedExposureSeconds = sessionExposure
+                        selectedTestIso = sessionIso
+                        returnTabAfterDarkFrame = MainMenuTab.SAVE
+                        selectedTab = MainMenuTab.SETUP
+                        currentStep = WorkflowStep.DARK_FRAME_NOTICE
+                        statusMessage = "カメラのレンズを完全に覆ってください。\n準備ができたらシャッターボタンを押してダークフレームを撮影します。"
+                    },
                     isSetupCompleted = isSetupCompleted,
                     isIntervalCompleted = isIntervalCompleted,
                     hasExistingIntervalFiles = hasExistingIntervalFiles,
