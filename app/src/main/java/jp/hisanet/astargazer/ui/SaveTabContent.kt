@@ -11,6 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -71,9 +72,14 @@ import jp.hisanet.astargazer.util.ImageCompositor
 import jp.hisanet.astargazer.util.StorageHelper
 import jp.hisanet.astargazer.util.VideoEncoderHelper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.time.Duration.Companion.milliseconds
+
+enum class AutoPageDirection { NONE, FORWARD, BACKWARD }
 
 /**
  * 出力モード
@@ -131,8 +137,25 @@ fun SaveTabContent(
     var intervalFiles by remember(selectedSession) { mutableStateOf(StorageHelper.getIntervalImageFiles(selectedSession, context)) }
 
     var previousSessionPath by remember { mutableStateOf(selectedSession?.absolutePath) }
+    var autoPageDirection by remember { mutableStateOf(AutoPageDirection.NONE) }
+
+    // 自動ページ送り (スライドショー) タイマー
+    LaunchedEffect(autoPageDirection, intervalFiles.size) {
+        if (autoPageDirection != AutoPageDirection.NONE && intervalFiles.isNotEmpty()) {
+            while (isActive && autoPageDirection != AutoPageDirection.NONE) {
+                delay(250.milliseconds)
+                if (autoPageDirection == AutoPageDirection.FORWARD) {
+                    currentImageIndex = if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
+                } else if (autoPageDirection == AutoPageDirection.BACKWARD) {
+                    currentImageIndex = if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
+                }
+            }
+        }
+    }
+
     // 選択セッションまたはタブ切り替え時にファイルリスト・セッション一覧を再読み込み
     LaunchedEffect(selectedSession?.absolutePath, selectedTab) {
+        autoPageDirection = AutoPageDirection.NONE
         val freshSessions = StorageHelper.getIntervalSessions(context)
         sessions = freshSessions
         if (selectedSessionPath == null || freshSessions.none { it.absolutePath == selectedSessionPath }) {
@@ -646,46 +669,102 @@ fun SaveTabContent(
                 }
             }
 
-            // コマ切り替えコントロールバー
+            // コマ切り替えコントロールバー (長押しで自動移動、タップで1コマ移動または停止)
             if (intervalFiles.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    OutlinedButton(
-                        onClick = {
-                            currentImageIndex = if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
-                        },
-                        enabled = !isGenerating,
+                    // [◀ 前] ボタン
+                    Surface(
                         shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        border = BorderStroke(1.dp, Color.Gray),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        modifier = Modifier.height(32.dp)
+                        border = BorderStroke(
+                            1.dp,
+                            if (autoPageDirection == AutoPageDirection.BACKWARD) Color(0xFF1E88E5) else Color.Gray
+                        ),
+                        color = if (autoPageDirection == AutoPageDirection.BACKWARD) Color(0xFF1E88E5).copy(alpha = 0.35f) else Color.Transparent,
+                        modifier = Modifier
+                            .height(34.dp)
+                            .pointerInput(autoPageDirection, isGenerating, intervalFiles) {
+                                if (!isGenerating && intervalFiles.isNotEmpty()) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            if (autoPageDirection != AutoPageDirection.NONE) {
+                                                autoPageDirection = AutoPageDirection.NONE
+                                            } else {
+                                                currentImageIndex = if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
+                                            }
+                                        },
+                                        onLongPress = {
+                                            autoPageDirection = AutoPageDirection.BACKWARD
+                                        }
+                                    )
+                                }
+                            }
                     ) {
-                        Text("◀ 前", fontSize = 11.sp, color = Color.White)
+                        Box(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (autoPageDirection == AutoPageDirection.BACKWARD) "◀◀ 自動" else "◀ 前",
+                                fontSize = 11.sp,
+                                color = Color.White,
+                                fontWeight = if (autoPageDirection == AutoPageDirection.BACKWARD) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
                     }
 
                     Text(
-                        text = "📷 ${currentImageIndex + 1} / ${intervalFiles.size}コマ",
-                        color = Color.White,
+                        text = when (autoPageDirection) {
+                            AutoPageDirection.FORWARD -> "⏩ ${currentImageIndex + 1} / ${intervalFiles.size}コマ"
+                            AutoPageDirection.BACKWARD -> "⏪ ${currentImageIndex + 1} / ${intervalFiles.size}コマ"
+                            AutoPageDirection.NONE -> "📷 ${currentImageIndex + 1} / ${intervalFiles.size}コマ"
+                        },
+                        color = if (autoPageDirection != AutoPageDirection.NONE) Color(0xFF64B5F6) else Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
 
-                    OutlinedButton(
-                        onClick = {
-                            currentImageIndex = if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
-                        },
-                        enabled = !isGenerating,
+                    // [次 ▶] ボタン
+                    Surface(
                         shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        border = BorderStroke(1.dp, Color.Gray),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                        modifier = Modifier.height(32.dp)
+                        border = BorderStroke(
+                            1.dp,
+                            if (autoPageDirection == AutoPageDirection.FORWARD) Color(0xFF1E88E5) else Color.Gray
+                        ),
+                        color = if (autoPageDirection == AutoPageDirection.FORWARD) Color(0xFF1E88E5).copy(alpha = 0.35f) else Color.Transparent,
+                        modifier = Modifier
+                            .height(34.dp)
+                            .pointerInput(autoPageDirection, isGenerating, intervalFiles) {
+                                if (!isGenerating && intervalFiles.isNotEmpty()) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            if (autoPageDirection != AutoPageDirection.NONE) {
+                                                autoPageDirection = AutoPageDirection.NONE
+                                            } else {
+                                                currentImageIndex = if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
+                                            }
+                                        },
+                                        onLongPress = {
+                                            autoPageDirection = AutoPageDirection.FORWARD
+                                        }
+                                    )
+                                }
+                            }
                     ) {
-                        Text("次 ▶", fontSize = 11.sp, color = Color.White)
+                        Box(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (autoPageDirection == AutoPageDirection.FORWARD) "自動 ▶▶" else "次 ▶",
+                                fontSize = 11.sp,
+                                color = Color.White,
+                                fontWeight = if (autoPageDirection == AutoPageDirection.FORWARD) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
                     }
                 }
             }
@@ -938,16 +1017,7 @@ fun SaveTabContent(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // 1. 画像の表示エリアを一番上に移動
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(360.dp)
-                ) {
-                    previewBoxContent()
-                }
-
-                // 2. 処理選択プルダウンはそのすぐ下に配置
+                // 1. 処理選択プルダウンを一番上に配置（撮影前設定・インターバル撮影と位置を統一）
                 ScreenSwitchDropdown(
                     selectedTab = selectedTab,
                     onTabSelected = onTabSelected,
@@ -958,6 +1028,15 @@ fun SaveTabContent(
                     hasExistingIntervalFiles = hasExistingIntervalFiles,
                     onCancelSetup = onCancelSetup
                 )
+
+                // 2. 画像の表示エリア
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                ) {
+                    previewBoxContent()
+                }
 
                 // 3. その他のコントロール
                 controlsContent()
