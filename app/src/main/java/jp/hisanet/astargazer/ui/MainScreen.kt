@@ -15,6 +15,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -78,6 +79,7 @@ import androidx.core.content.ContextCompat
 import jp.hisanet.astargazer.model.IntervalShootingState
 import jp.hisanet.astargazer.ui.camera.CameraControlManager
 import jp.hisanet.astargazer.ui.camera.CameraPreview
+import jp.hisanet.astargazer.util.AudioTriggerHelper
 import jp.hisanet.astargazer.util.Camera2BurstSession
 import jp.hisanet.astargazer.util.ExifHelper
 import jp.hisanet.astargazer.util.FileViewerHelper
@@ -145,10 +147,14 @@ fun MainScreen() {
                 context,
                 Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED &&
-                    (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.READ_MEDIA_IMAGES
-                    ) == PackageManager.PERMISSION_GRANTED)
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_MEDIA_IMAGES
+            ) == PackageManager.PERMISSION_GRANTED)
         )
     }
 
@@ -157,8 +163,9 @@ fun MainScreen() {
     ) { permissions ->
         val cameraGranted = permissions[Manifest.permission.CAMERA] ?: false
         val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
         val mediaGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || permissions[Manifest.permission.READ_MEDIA_IMAGES] ?: false
-        hasPermissions = cameraGranted && locationGranted && mediaGranted
+        hasPermissions = cameraGranted && locationGranted && audioGranted && mediaGranted
     }
 
     LaunchedEffect(Unit) {
@@ -166,7 +173,8 @@ fun MainScreen() {
             val perms = mutableListOf(
                 Manifest.permission.CAMERA,
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.RECORD_AUDIO
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 perms.add(Manifest.permission.READ_MEDIA_IMAGES)
@@ -182,7 +190,8 @@ fun MainScreen() {
             val perms = mutableListOf(
                 Manifest.permission.CAMERA,
                 Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.RECORD_AUDIO
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 perms.add(Manifest.permission.READ_MEDIA_IMAGES)
@@ -1352,6 +1361,37 @@ private fun IntervalTabContent(
     hasExistingIntervalFiles: Boolean = false,
     onCancelSetup: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var isAudioTriggerWaiting by remember { mutableStateOf(false) }
+    var audioTriggerCountdown by remember { mutableIntStateOf(5) }
+    var audioTriggerHelper by remember { mutableStateOf<AudioTriggerHelper?>(null) }
+    val audioSensitivityThreshold by rememberSaveable { mutableDoubleStateOf(1500.0) }
+    var pressStartTime by remember { mutableStateOf(0L) }
+
+    LaunchedEffect(isAudioTriggerWaiting) {
+        if (isAudioTriggerWaiting) {
+            while (audioTriggerCountdown > 0 && isAudioTriggerWaiting) {
+                delay(1000.milliseconds)
+                audioTriggerCountdown--
+            }
+            if (isAudioTriggerWaiting) {
+                audioTriggerHelper?.stopListening()
+                audioTriggerHelper = null
+                isAudioTriggerWaiting = false
+                onTriggerShutter()
+            }
+        }
+    }
+
+    LaunchedEffect(isIntervalActive) {
+        if (isIntervalActive && isAudioTriggerWaiting) {
+            audioTriggerHelper?.stopListening()
+            audioTriggerHelper = null
+            isAudioTriggerWaiting = false
+        }
+    }
+
     val displayIntervalBitmap = remember(latestIntervalBitmap, isLandscape) {
         if (latestIntervalBitmap != null) {
             val rotation = if (isLandscape) -90f else 0f
@@ -1376,7 +1416,7 @@ private fun IntervalTabContent(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit
             )
-        } else if (isCamera2BurstActive || isIntervalActive) {
+        } else if (isCamera2BurstActive || isIntervalActive || isAudioTriggerWaiting) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1384,7 +1424,7 @@ private fun IntervalTabContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (isIntervalActive) "インターバル撮影中...\n(バックグラウンドで継続中)" else camera2BurstStatus,
+                    text = if (isAudioTriggerWaiting) "🎤 マイク音量検知待機中...\n(${audioTriggerCountdown}秒 または音量検知で開始)" else (if (isIntervalActive) "インターバル撮影中...\n(バックグラウンドで継続中)" else camera2BurstStatus),
                     color = Color.White,
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
@@ -1440,16 +1480,66 @@ private fun IntervalTabContent(
 
     val shutterButtonContent: @Composable () -> Unit = {
         Button(
-            onClick = onTriggerShutter,
+            onClick = {
+                if (!isAudioTriggerWaiting) {
+                    onTriggerShutter()
+                }
+            },
             enabled = isIntervalActive || !isCamera2BurstActive,
-            modifier = Modifier.size(72.dp),
+            modifier = Modifier
+                .size(72.dp)
+                .pointerInput(isIntervalActive, isAudioTriggerWaiting) {
+                    if (!isIntervalActive) {
+                        detectTapGestures(
+                            onPress = {
+                                pressStartTime = System.currentTimeMillis()
+                                val released = try {
+                                    tryAwaitRelease()
+                                } catch (_: Exception) {
+                                    false
+                                }
+                                val holdDuration = System.currentTimeMillis() - pressStartTime
+                                if (released) {
+                                    if (holdDuration >= 800L) {
+                                        val seconds = (holdDuration / 1000L).toInt().coerceIn(3, 15)
+                                        audioTriggerCountdown = seconds
+                                        isAudioTriggerWaiting = true
+                                        audioTriggerHelper = AudioTriggerHelper(context, threshold = audioSensitivityThreshold) {
+                                            coroutineScope.launch(Dispatchers.Main) {
+                                                audioTriggerHelper?.stopListening()
+                                                audioTriggerHelper = null
+                                                isAudioTriggerWaiting = false
+                                                onTriggerShutter()
+                                            }
+                                        }
+                                        audioTriggerHelper?.startListening()
+                                    } else {
+                                        if (isAudioTriggerWaiting) {
+                                            audioTriggerHelper?.stopListening()
+                                            audioTriggerHelper = null
+                                            isAudioTriggerWaiting = false
+                                        } else {
+                                            onTriggerShutter()
+                                        }
+                                    }
+                                } else {
+                                    if (isAudioTriggerWaiting) {
+                                        audioTriggerHelper?.stopListening()
+                                        audioTriggerHelper = null
+                                        isAudioTriggerWaiting = false
+                                    }
+                                }
+                            }
+                        )
+                    }
+                },
             shape = CircleShape,
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (isIntervalActive) Color(0xFFD32F2F) else Color.Red
+                containerColor = if (isIntervalActive || isAudioTriggerWaiting) Color(0xFFD32F2F) else Color.Red
             ),
             contentPadding = PaddingValues(0.dp)
         ) {
-            if (isIntervalActive) {
+            if (isIntervalActive || isAudioTriggerWaiting) {
                 Box(
                     modifier = Modifier
                         .size(28.dp)

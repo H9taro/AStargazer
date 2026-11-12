@@ -3,6 +3,7 @@ package jp.hisanet.astargazer.util
 import android.content.Context
 import android.os.Environment
 import android.os.StatFs
+import android.provider.MediaStore
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
@@ -341,19 +342,48 @@ object StorageHelper {
     }
 
     /**
-     * 指定されたセッションディレクトリの画像を削除する
+     * 指定されたセッションディレクトリの画像を削除する (MediaStore 連携対応)
      */
     fun clearIntervalImages(sessionDir: File? = null, context: Context? = null): Boolean {
         val files = getIntervalImageFiles(sessionDir, context)
         var allDeleted = true
+        val contentResolver = context?.contentResolver
+
         for (file in files) {
-            if (file.exists() && !file.delete()) {
+            try {
+                if (contentResolver != null) {
+                    val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    val selection = "${MediaStore.Images.Media.DATA} = ?"
+                    val selectionArgs = arrayOf(file.absolutePath)
+                    contentResolver.delete(uri, selection, selectionArgs)
+                }
+            } catch (e: Exception) {
+                Log.w("StorageHelper", "MediaStore delete failed for ${file.absolutePath}", e)
+            }
+
+            try {
+                if (file.exists() && !file.delete()) {
+                    System.gc()
+                    if (file.exists()) file.delete()
+                }
+                if (file.exists()) {
+                    allDeleted = false
+                }
+            } catch (e: Exception) {
+                Log.e("StorageHelper", "Failed to delete file ${file.absolutePath}", e)
                 allDeleted = false
             }
         }
+
         if (sessionDir != null && sessionDir.exists()) {
-            sessionDir.deleteRecursively()
+            try {
+                sessionDir.walkBottomUp().forEach { it.delete() }
+                sessionDir.delete()
+            } catch (e: Exception) {
+                Log.e("StorageHelper", "Failed to delete session directory ${sessionDir.absolutePath}", e)
+            }
         }
+
         return allDeleted
     }
 
@@ -370,7 +400,10 @@ object StorageHelper {
         }
         val legacyDir = getPublicAStargazerDir("Interval", context = context)
         if (legacyDir.exists()) {
-            legacyDir.deleteRecursively()
+            try {
+                legacyDir.walkBottomUp().forEach { it.delete() }
+                legacyDir.delete()
+            } catch (_: Exception) {}
         }
         return allDeleted
     }

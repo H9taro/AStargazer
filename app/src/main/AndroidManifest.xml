@@ -10,6 +10,7 @@
     <!-- 位置情報パーミッション (EXIF GPS記録用) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- ストレージ / メディアパーミッション (インターバル撮影画像読み込み・仕上げ用) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
