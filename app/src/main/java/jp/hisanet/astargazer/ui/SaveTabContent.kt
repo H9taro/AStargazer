@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,6 +68,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import jp.hisanet.astargazer.util.ExportManager
+import jp.hisanet.astargazer.util.ExportState
 import jp.hisanet.astargazer.util.FileViewerHelper
 import jp.hisanet.astargazer.util.ImageCompositor
 import jp.hisanet.astargazer.util.StorageHelper
@@ -126,48 +129,67 @@ fun SaveTabContent(
         Log.d("OrientationDebug", "SaveTabContent orientation changed: orientation=${currentConfig.orientation}")
     }
 
-    var sessions by remember { mutableStateOf(StorageHelper.getIntervalSessions(context)) }
-    var selectedSessionPath by rememberSaveable { mutableStateOf(sessions.firstOrNull()?.absolutePath) }
-    var selectedSession by remember(sessions, selectedSessionPath) {
-        mutableStateOf(sessions.find { it.absolutePath == selectedSessionPath } ?: sessions.firstOrNull())
+    var sessions by remember { mutableStateOf<List<File>>(emptyList()) }
+    var selectedSessionPath by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedSession = remember(sessions, selectedSessionPath) {
+        sessions.find { it.absolutePath == selectedSessionPath } ?: sessions.firstOrNull()
     }
     
     // プレビュー表示する画像コマのインデックス
     var currentImageIndex by rememberSaveable { mutableIntStateOf(0) }
-    var intervalFiles by remember(selectedSession) { mutableStateOf(StorageHelper.getIntervalImageFiles(selectedSession, context)) }
+    var intervalFiles by remember { mutableStateOf<List<File>>(emptyList()) }
 
-    var previousSessionPath by remember { mutableStateOf(selectedSession?.absolutePath) }
+    var previousSessionPath by remember { mutableStateOf<String?>(null) }
     var autoPageDirection by remember { mutableStateOf(AutoPageDirection.NONE) }
+    var autoPageStep by remember { mutableIntStateOf(1) }
+
+    fun getSkipStep(holdDurationMs: Long): Int {
+        return when {
+            holdDurationMs >= 5000L -> 32
+            holdDurationMs >= 4000L -> 16
+            holdDurationMs >= 3000L -> 8
+            holdDurationMs >= 2000L -> 4
+            holdDurationMs >= 1000L -> 2
+            else -> 1
+        }
+    }
 
     // 自動ページ送り (スライドショー) タイマー
-    LaunchedEffect(autoPageDirection, intervalFiles.size) {
+    LaunchedEffect(autoPageDirection, autoPageStep, intervalFiles.size) {
         if (autoPageDirection != AutoPageDirection.NONE && intervalFiles.isNotEmpty()) {
             while (isActive && autoPageDirection != AutoPageDirection.NONE) {
-                delay(250.milliseconds)
+                delay(400.milliseconds)
                 if (autoPageDirection == AutoPageDirection.FORWARD) {
-                    currentImageIndex = if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
+                    currentImageIndex = (currentImageIndex + autoPageStep) % intervalFiles.size
                 } else if (autoPageDirection == AutoPageDirection.BACKWARD) {
-                    currentImageIndex = if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
+                    currentImageIndex = (currentImageIndex - autoPageStep).let { idx ->
+                        if (idx < 0) (intervalFiles.size + (idx % intervalFiles.size)) % intervalFiles.size else idx
+                    }
                 }
             }
         }
     }
 
-    // 選択セッションまたはタブ切り替え時にファイルリスト・セッション一覧を再読み込み
-    LaunchedEffect(selectedSession?.absolutePath, selectedTab) {
+    // 選択セッションまたはタブ切り替え時にファイルリスト・セッション一覧を再読み込み (Dispatchers.IO)
+    LaunchedEffect(selectedSessionPath, selectedTab) {
         autoPageDirection = AutoPageDirection.NONE
-        val freshSessions = StorageHelper.getIntervalSessions(context)
-        sessions = freshSessions
-        if (selectedSessionPath == null || freshSessions.none { it.absolutePath == selectedSessionPath }) {
-            selectedSessionPath = freshSessions.firstOrNull()?.absolutePath
+        val targetPath = selectedSessionPath
+        withContext(Dispatchers.IO) {
+            val freshSessions = StorageHelper.getIntervalSessions(context)
+            val currentSess = freshSessions.find { it.absolutePath == targetPath } ?: freshSessions.firstOrNull()
+            val files = StorageHelper.getIntervalImageFiles(currentSess, context)
+
+            withContext(Dispatchers.Main) {
+                sessions = freshSessions
+                intervalFiles = files
+                val effectivePath = currentSess?.absolutePath
+                if (effectivePath != previousSessionPath) {
+                    previousSessionPath = effectivePath
+                    currentImageIndex = 0
+                }
+                Log.i("SaveTabContent", "Refreshed SaveTabContent: sessions=${freshSessions.size}, currentSession=${currentSess?.name}, intervalFiles=${files.size}")
+            }
         }
-        val currentSess = freshSessions.find { it.absolutePath == selectedSessionPath } ?: freshSessions.firstOrNull()
-        intervalFiles = StorageHelper.getIntervalImageFiles(currentSess, context)
-        if (selectedSession?.absolutePath != previousSessionPath) {
-            previousSessionPath = selectedSession?.absolutePath
-            currentImageIndex = 0
-        }
-        Log.i("SaveTabContent", "Refreshed SaveTabContent: sessions=${freshSessions.size}, currentSession=${currentSess?.name}, intervalFiles=${intervalFiles.size}")
     }
 
     val isSdCardAvailable = remember(context) { StorageHelper.getSdCardRoot(context) != null }
@@ -184,16 +206,22 @@ fun SaveTabContent(
     var cropOffsetX by rememberSaveable { mutableFloatStateOf(0.5f) }
     var cropOffsetY by rememberSaveable { mutableFloatStateOf(0.5f) }
 
-    var isGenerating by remember { mutableStateOf(false) }
-    var progress by remember { mutableFloatStateOf(0f) }
+    val exportState by ExportManager.state.collectAsState()
+    val isGenerating = exportState is ExportState.Generating
+    val progress = (exportState as? ExportState.Generating)?.progress ?: 0f
     var showMissingDarkFrameDialog by remember { mutableStateOf(false) }
     var missingParams by remember { mutableStateOf<jp.hisanet.astargazer.util.SessionCameraParams?>(null) }
 
-    var statusMessage by remember(intervalFiles, selectedSession) {
-        mutableStateOf(
-            if (intervalFiles.isNotEmpty()) "元画像: ${intervalFiles.size}コマ (${selectedSession?.name ?: ""})"
-            else "元画像がありません。"
-        )
+    val defaultStatusMessage = remember(intervalFiles, selectedSession) {
+        if (intervalFiles.isNotEmpty()) "元画像: ${intervalFiles.size}コマ (${selectedSession?.name ?: ""})"
+        else "元画像がありません。"
+    }
+
+    val statusMessage = when (val state = exportState) {
+        is ExportState.Generating -> state.message
+        is ExportState.Completed -> "生成完了: ${state.outputFile.name}"
+        is ExportState.Error -> state.message
+        is ExportState.Idle -> defaultStatusMessage
     }
 
     // プレビュー用の安全なサンプリングデコード関数（OOM防止）
@@ -245,7 +273,6 @@ fun SaveTabContent(
         // 選択中セッションの撮影条件 (EXIF) から必要ダークフレームを取得
         val sessionParams = StorageHelper.getSessionCameraParams(selectedSession, context)
         if (sessionParams == null) {
-            statusMessage = "セッション画像の EXIF (露出時間・ISO感度) を読み込めませんでした。"
             return
         }
 
@@ -256,46 +283,26 @@ fun SaveTabContent(
             return
         }
 
-        isGenerating = true
-        progress = 0f
-        statusMessage = "${selectedMode.label} を生成中..."
-
-        coroutineScope.launch(Dispatchers.IO) {
-            val success: Boolean
-            val outputFile: File
-
-            if (selectedMode.isTimelapse) {
-                outputFile = StorageHelper.getTimelapseVideoFile()
-                success = VideoEncoderHelper.createTimelapseVideo(
-                    imageFiles = intervalFiles,
-                    outputFile = outputFile,
-                    darkFrameFile = darkFrameFile,
-                    resolutionLabel = selectedMode.resolutionLabel,
-                    frameRate = selectedFrameRate,
-                    cropOffsetX = cropOffsetX,
-                    cropOffsetY = cropOffsetY,
-                    onProgress = { p -> progress = p }
-                )
-            } else {
-                outputFile = StorageHelper.getCompositeImageFile()
-                success = ImageCompositor.createLightenBlendComposite(
-                    imageFiles = intervalFiles,
-                    outputFile = outputFile,
-                    darkFrameFile = darkFrameFile,
-                    onProgress = { p -> progress = p }
-                )
-            }
-
-            withContext(Dispatchers.Main) {
-                isGenerating = false
-                if (success) {
-                    FileViewerHelper.scanFile(context, outputFile)
-                    statusMessage = "生成完了: ${outputFile.name}"
-                    FileViewerHelper.openInGoogleFilesOrViewer(context, outputFile)
-                } else {
-                    statusMessage = "${selectedMode.label} の生成に失敗しました。"
-                }
-            }
+        if (selectedMode.isTimelapse) {
+            val outputFile = StorageHelper.getTimelapseVideoFile()
+            ExportManager.startTimelapseExport(
+                context = context,
+                imageFiles = intervalFiles,
+                outputFile = outputFile,
+                darkFrameFile = darkFrameFile,
+                resolutionLabel = selectedMode.resolutionLabel,
+                frameRate = selectedFrameRate,
+                cropOffsetX = cropOffsetX,
+                cropOffsetY = cropOffsetY
+            )
+        } else {
+            val outputFile = StorageHelper.getCompositeImageFile()
+            ExportManager.startCompositeExport(
+                context = context,
+                imageFiles = intervalFiles,
+                outputFile = outputFile,
+                darkFrameFile = darkFrameFile
+            )
         }
     }
 
@@ -393,11 +400,10 @@ fun SaveTabContent(
                         modifier = Modifier.background(Color(0xFF1E1E1E))
                     ) {
                         sessions.forEach { session ->
-                            val fileCount = StorageHelper.getIntervalImageFiles(session, context).size
                             val isLatest = session == sessions.firstOrNull()
                             val isOnSd = isSdCardAvailable && StorageHelper.getSdCardRoot(context)?.let { session.absolutePath.startsWith(it.absolutePath) } == true
                             val locTag = if (isOnSd) "[SDカード]" else "[内部]"
-                            val label = if (isLatest) "${session.name} (最新 - $fileCount コマ) $locTag" else "${session.name} ($fileCount コマ) $locTag"
+                            val label = if (isLatest) "${session.name} (最新) $locTag" else "${session.name} $locTag"
                             DropdownMenuItem(
                                 text = {
                                     Text(
@@ -543,8 +549,17 @@ fun SaveTabContent(
                 }
             }
 
-            // コマ切り替えコントロールバー (長押しで自動移動、タップで1コマ移動または停止)
+            // コマ切り替えコントロールバー (長押し時間に応じたコマ飛ばし自動移動、タップで1コマ移動または停止)
             if (intervalFiles.isNotEmpty()) {
+                val skipLabel = when (autoPageStep) {
+                    32 -> "31コマ飛ばし"
+                    16 -> "15コマ飛ばし"
+                    8 -> "7コマ飛ばし"
+                    4 -> "3コマ飛ばし"
+                    2 -> "1コマ飛ばし"
+                    else -> "自動"
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -563,26 +578,39 @@ fun SaveTabContent(
                             .pointerInput(autoPageDirection, isGenerating, intervalFiles) {
                                 if (!isGenerating && intervalFiles.isNotEmpty()) {
                                     detectTapGestures(
-                                        onTap = {
-                                            if (autoPageDirection != AutoPageDirection.NONE) {
-                                                autoPageDirection = AutoPageDirection.NONE
-                                            } else {
-                                                currentImageIndex = if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
+                                        onPress = {
+                                            val pressTime = System.currentTimeMillis()
+                                            val released = try {
+                                                tryAwaitRelease()
+                                            } catch (_: Exception) {
+                                                false
                                             }
-                                        },
-                                        onLongPress = {
-                                            autoPageDirection = AutoPageDirection.BACKWARD
+                                            val holdDuration = System.currentTimeMillis() - pressTime
+                                            if (released) {
+                                                if (autoPageDirection != AutoPageDirection.NONE) {
+                                                    autoPageDirection = AutoPageDirection.NONE
+                                                } else if (holdDuration >= 800L) {
+                                                    autoPageStep = getSkipStep(holdDuration)
+                                                    autoPageDirection = AutoPageDirection.BACKWARD
+                                                } else {
+                                                    currentImageIndex = if (currentImageIndex > 0) currentImageIndex - 1 else intervalFiles.size - 1
+                                                }
+                                            } else {
+                                                if (autoPageDirection != AutoPageDirection.NONE) {
+                                                    autoPageDirection = AutoPageDirection.NONE
+                                                }
+                                            }
                                         }
                                     )
                                 }
                             }
                     ) {
                         Box(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (autoPageDirection == AutoPageDirection.BACKWARD) "◀◀ 自動" else "◀ 前",
+                                text = if (autoPageDirection == AutoPageDirection.BACKWARD) "◀◀ $skipLabel" else "◀ 前",
                                 fontSize = 11.sp,
                                 color = Color.White,
                                 fontWeight = if (autoPageDirection == AutoPageDirection.BACKWARD) FontWeight.Bold else FontWeight.Normal
@@ -592,8 +620,8 @@ fun SaveTabContent(
 
                     Text(
                         text = when (autoPageDirection) {
-                            AutoPageDirection.FORWARD -> "⏩ ${currentImageIndex + 1} / ${intervalFiles.size}コマ"
-                            AutoPageDirection.BACKWARD -> "⏪ ${currentImageIndex + 1} / ${intervalFiles.size}コマ"
+                            AutoPageDirection.FORWARD -> "⏩ ${currentImageIndex + 1} / ${intervalFiles.size}コマ ($skipLabel)"
+                            AutoPageDirection.BACKWARD -> "⏪ ${currentImageIndex + 1} / ${intervalFiles.size}コマ ($skipLabel)"
                             AutoPageDirection.NONE -> "📷 ${currentImageIndex + 1} / ${intervalFiles.size}コマ"
                         },
                         color = if (autoPageDirection != AutoPageDirection.NONE) Color(0xFF64B5F6) else Color.White,
@@ -614,26 +642,39 @@ fun SaveTabContent(
                             .pointerInput(autoPageDirection, isGenerating, intervalFiles) {
                                 if (!isGenerating && intervalFiles.isNotEmpty()) {
                                     detectTapGestures(
-                                        onTap = {
-                                            if (autoPageDirection != AutoPageDirection.NONE) {
-                                                autoPageDirection = AutoPageDirection.NONE
-                                            } else {
-                                                currentImageIndex = if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
+                                        onPress = {
+                                            val pressTime = System.currentTimeMillis()
+                                            val released = try {
+                                                tryAwaitRelease()
+                                            } catch (_: Exception) {
+                                                false
                                             }
-                                        },
-                                        onLongPress = {
-                                            autoPageDirection = AutoPageDirection.FORWARD
+                                            val holdDuration = System.currentTimeMillis() - pressTime
+                                            if (released) {
+                                                if (autoPageDirection != AutoPageDirection.NONE) {
+                                                    autoPageDirection = AutoPageDirection.NONE
+                                                } else if (holdDuration >= 800L) {
+                                                    autoPageStep = getSkipStep(holdDuration)
+                                                    autoPageDirection = AutoPageDirection.FORWARD
+                                                } else {
+                                                    currentImageIndex = if (currentImageIndex < intervalFiles.size - 1) currentImageIndex + 1 else 0
+                                                }
+                                            } else {
+                                                if (autoPageDirection != AutoPageDirection.NONE) {
+                                                    autoPageDirection = AutoPageDirection.NONE
+                                                }
+                                            }
                                         }
                                     )
                                 }
                             }
                     ) {
                         Box(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (autoPageDirection == AutoPageDirection.FORWARD) "自動 ▶▶" else "次 ▶",
+                                text = if (autoPageDirection == AutoPageDirection.FORWARD) "$skipLabel ▶▶" else "次 ▶",
                                 fontSize = 11.sp,
                                 color = Color.White,
                                 fontWeight = if (autoPageDirection == AutoPageDirection.FORWARD) FontWeight.Bold else FontWeight.Normal

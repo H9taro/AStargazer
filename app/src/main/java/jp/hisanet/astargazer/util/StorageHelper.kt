@@ -256,9 +256,9 @@ object StorageHelper {
      */
     fun getIntervalImageFiles(sessionDir: File? = null, context: Context? = null): List<File> {
         val targetDir = sessionDir ?: getIntervalSessions(context).firstOrNull() ?: getPublicAStargazerDir("Interval", context = context)
-        if (!targetDir.exists()) return emptyList()
+        if (!targetDir.exists() || !targetDir.isDirectory) return emptyList()
 
-        return targetDir.walkTopDown().filter { file ->
+        return targetDir.listFiles { file ->
             val name = file.name
             val ext = file.extension.lowercase()
             !file.isDirectory &&
@@ -266,15 +266,7 @@ object StorageHelper {
                     !name.startsWith(".") &&
                     !name.startsWith(".trashed") &&
                     (ext == "jpg" || ext == "jpeg" || ext == "png")
-        }.sortedBy { file ->
-            // ファイル名から UTC タイムスタンプ（末尾の数値）を抽出してソートキーにする
-            // 例: "IMG_0001_1740000000000.jpg" -> 1740000000000L
-            // 抽出できない場合はファイル最終更新日時をフォールバックにする
-            val cleanName = file.name.substringBeforeLast('.')
-            val parts = cleanName.split('_')
-            val timestamp = parts.getOrNull(2)?.toLongOrNull() ?: parts.getOrNull(1)?.toLongOrNull() ?: file.lastModified()
-            timestamp
-        }.toList()
+        }?.sortedBy { it.name }?.toList() ?: emptyList()
     }
 
     fun createIntervalJpegFile(index: Int, sessionDir: File? = null, context: Context? = null): File {

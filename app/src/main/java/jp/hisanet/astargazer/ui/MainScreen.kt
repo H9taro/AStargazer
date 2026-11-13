@@ -258,7 +258,7 @@ private fun MainAppContent() {
     var isIntervalCompleted by rememberSaveable { mutableStateOf(false) }
 
     // 前回の撮影画像ファイルまたはインターバル撮影セッションディレクトリがストレージに残っているかどうか
-    val hasExistingIntervalFiles = StorageHelper.getIntervalSessions(context).isNotEmpty() || StorageHelper.getIntervalImageFiles(context = context).isNotEmpty()
+    val hasExistingIntervalFiles = true
 
     var capturedTestBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var latestIntervalBitmap by remember { mutableStateOf<Bitmap?>(null) }

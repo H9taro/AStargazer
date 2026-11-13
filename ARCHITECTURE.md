@@ -57,6 +57,7 @@ Android launcher
 | `app/src/main/java/jp/hisanet/astargazer/util/Camera2BurstSession.kt` | Camera2 の JPEG セッション、連続撮影、動的 JPEG 向き設定、画像保存 |
 | `app/src/main/java/jp/hisanet/astargazer/util/DeviceOrientationMonitor.kt` | 端末の物理的な向き（0度、90度、180度、270度）の常時監視 |
 | `app/src/main/java/jp/hisanet/astargazer/util/StorageHelper.kt` | 内部ストレージ・SDカード横断の Pictures/AStargazer 管理、セッション一覧、SDカード退避（移動） |
+| `app/src/main/java/jp/hisanet/astargazer/util/ExportManager.kt` | 仕上げ画面の生成処理（タイムラプス・比較明合成）のバックグラウンド管理および SSOT 状態管理（画面ロック/復帰対応） |
 | `app/src/main/java/jp/hisanet/astargazer/util/ImageCompositor.kt` | ダークフレーム減算と比較明合成 |
 | `app/src/main/java/jp/hisanet/astargazer/util/VideoEncoderHelper.kt` | 静止画列からの MP4 タイムラプス生成 |
 | `app/src/main/java/jp/hisanet/astargazer/util/ImageContrastAnalyzer.kt` | 試写画像の輝度コントラスト（標準偏差）解析による星像評価・スコア算出 |
