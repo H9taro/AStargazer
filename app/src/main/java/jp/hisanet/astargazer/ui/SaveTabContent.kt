@@ -171,12 +171,6 @@ fun SaveTabContent(
     }
 
     val isSdCardAvailable = remember(context) { StorageHelper.getSdCardRoot(context) != null }
-    var showMoveDialog by remember { mutableStateOf(false) }
-    var isMovingSession by remember { mutableStateOf(false) }
-
-    val isSelectedSessionOnSdCard = remember(selectedSession, context, isSdCardAvailable) {
-        !(selectedSession == null || !isSdCardAvailable) && StorageHelper.getSdCardRoot(context)?.let { selectedSession?.absolutePath?.startsWith(it.absolutePath) } == true
-    }
 
     var sessionDropdownExpanded by remember { mutableStateOf(false) }
     var selectedMode by rememberSaveable { mutableStateOf(ExportMode.UHD_4K_TIMELAPSE) }
@@ -192,7 +186,6 @@ fun SaveTabContent(
 
     var isGenerating by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
-    var showDeleteDialog by remember { mutableStateOf(false) }
     var showMissingDarkFrameDialog by remember { mutableStateOf(false) }
     var missingParams by remember { mutableStateOf<jp.hisanet.astargazer.util.SessionCameraParams?>(null) }
 
@@ -306,76 +299,11 @@ fun SaveTabContent(
         }
     }
 
-    // 削除確認ダイアログ
-    if (showDeleteDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            title = { Text("🗑️ 元画像の削除", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "誤操作を防ぐため、削除範囲を選択してください。",
-                        color = Color.LightGray,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Button(
-                        onClick = {
-                            showDeleteDialog = false
-                            coroutineScope.launch(Dispatchers.IO) {
-                                val success = StorageHelper.clearIntervalImages(selectedSession, context)
-                                val updatedSessions = StorageHelper.getIntervalSessions(context)
-                                val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull(), context)
-                                withContext(Dispatchers.Main) {
-                                    sessions = updatedSessions
-                                    selectedSessionPath = updatedSessions.firstOrNull()?.absolutePath
-                                    intervalFiles = updatedFiles
-                                    currentImageIndex = 0
-                                    statusMessage = if (success) "選択中の回の画像を削除しました。" else "一部の削除に失敗しました。"
-                                }
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("現在の回 (${selectedSession?.name ?: ""}) のみ削除", color = Color.White, fontSize = 13.sp)
-                    }
-
-                    Button(
-                        onClick = {
-                            showDeleteDialog = false
-                            coroutineScope.launch(Dispatchers.IO) {
-                                val success = StorageHelper.clearAllIntervalImages(context)
-                                val updatedSessions = StorageHelper.getIntervalSessions(context)
-                                val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull(), context)
-                                withContext(Dispatchers.Main) {
-                                    sessions = updatedSessions
-                                    selectedSessionPath = updatedSessions.firstOrNull()?.absolutePath
-                                    intervalFiles = updatedFiles
-                                    currentImageIndex = 0
-                                    statusMessage = if (success) "すべての回の元画像を削除しました。" else "一部の削除に失敗しました。"
-                                }
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("すべての回を削除", color = Color.White, fontSize = 13.sp)
-                    }
-
-                    OutlinedButton(
-                        onClick = { showDeleteDialog = false },
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(1.dp, Color.Gray),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                    ) {
-                        Text("キャンセル", color = Color.White, fontSize = 13.sp)
-                    }
-                }
-            },
-            confirmButton = {},
-            containerColor = Color(0xFF2C2C2C)
-        )
+    // 現在プレビュー中のコマを Google Files / ギャラリーで直接表示（コピーなし）
+    fun executeOpenCurrentFrame() {
+        if (intervalFiles.isEmpty() || currentImageIndex !in intervalFiles.indices) return
+        val currentFile = intervalFiles[currentImageIndex]
+        FileViewerHelper.openInGoogleFilesOrViewer(context, currentFile)
     }
 
     // ダークフレーム未検出ダイアログ
@@ -405,60 +333,6 @@ fun SaveTabContent(
             dismissButton = {
                 OutlinedButton(
                     onClick = { showMissingDarkFrameDialog = false },
-                    border = BorderStroke(1.dp, Color.Gray),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                ) {
-                    Text("キャンセル", color = Color.White)
-                }
-            },
-            containerColor = Color(0xFF2C2C2C)
-        )
-    }
-
-    // SDカードへ退避（移動）ダイアログ
-    if (showMoveDialog && selectedSession != null) {
-        AlertDialog(
-            onDismissRequest = { if (!isMovingSession) showMoveDialog = false },
-            title = { Text("💾 SDカードへの退避", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "選択中の回 (${selectedSession?.name}) の画像全コマを SDカードの Pictures/AStargazer へ移動しますか？\n（移動後も仕上げ画面で引き続き使用できます）",
-                        color = Color.LightGray,
-                        fontSize = 13.sp
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val targetSession = selectedSession ?: return@Button
-                        isMovingSession = true
-                        coroutineScope.launch(Dispatchers.IO) {
-                            val success = StorageHelper.moveSessionToSdCard(context, targetSession)
-                            val updatedSessions = StorageHelper.getIntervalSessions(context)
-                            val updatedFiles = StorageHelper.getIntervalImageFiles(updatedSessions.firstOrNull(), context)
-                            withContext(Dispatchers.Main) {
-                                isMovingSession = false
-                                showMoveDialog = false
-                                sessions = updatedSessions
-                                selectedSessionPath = updatedSessions.firstOrNull()?.absolutePath
-                                intervalFiles = updatedFiles
-                                currentImageIndex = 0
-                                statusMessage = if (success) "SDカードへの退避が完了しました。" else "SDカードへの退避に失敗しました。"
-                            }
-                        }
-                    },
-                    enabled = !isMovingSession,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
-                ) {
-                    Text(if (isMovingSession) "移動中..." else "退避実行", color = Color.White)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = { showMoveDialog = false },
-                    enabled = !isMovingSession,
                     border = BorderStroke(1.dp, Color.Gray),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
                 ) {
@@ -825,46 +699,25 @@ fun SaveTabContent(
                 )
             }
 
-            // SDカード退避ボタン
-            if (isSdCardAvailable && selectedSession != null && !isSelectedSessionOnSdCard) {
-                Button(
-                    onClick = { showMoveDialog = true },
-                    enabled = !isGenerating && !isMovingSession && intervalFiles.isNotEmpty(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0288D1)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = "💾 この回を SDカードへ退避",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            // 削除ボタン
-            OutlinedButton(
-                onClick = { showDeleteDialog = true },
-                enabled = !isGenerating && sessions.isNotEmpty(),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = Color(0xFFFF5252)
-                ),
-                border = BorderStroke(1.dp, Color(0xFFFF5252)),
+            // 現在のコマを開くボタン（Google Files / ギャラリーで直接表示・コピーなし）
+            Button(
+                onClick = { executeOpenCurrentFrame() },
+                enabled = !isGenerating && selectedSession != null && intervalFiles.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0288D1)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(40.dp),
+                    .height(44.dp),
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Text(
-                    text = "🗑️ 元画像を削除",
-                    color = Color(0xFFFF5252),
-                    fontSize = 13.sp,
+                    text = "👁️ このコマを開く",
+                    color = Color.White,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
+
+
         }
     }
 

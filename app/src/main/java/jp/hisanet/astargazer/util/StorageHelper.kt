@@ -3,12 +3,9 @@ package jp.hisanet.astargazer.util
 import android.content.Context
 import android.os.Environment
 import android.os.StatFs
-import android.provider.MediaStore
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.util.Locale
 
 enum class StorageTarget {
@@ -283,128 +280,5 @@ object StorageHelper {
     fun createIntervalJpegFile(index: Int, sessionDir: File? = null, context: Context? = null): File {
         val dir = sessionDir ?: getNextIntervalSessionDir(context = context)
         return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, System.currentTimeMillis()))
-    }
-
-    /**
-     * 選択したセッションをSDカードへ退避（移動）する
-     */
-    fun moveSessionToSdCard(context: Context, sessionDir: File): Boolean {
-        if (!sessionDir.exists()) return false
-        val sdAStargazer = getSdCardAStargazerDir(context) ?: return false
-        val destDir = File(sdAStargazer, sessionDir.name)
-        if (!destDir.exists()) destDir.mkdirs()
-
-        val files = getIntervalImageFiles(sessionDir, context)
-        if (files.isEmpty()) return false
-
-        var copySuccess = true
-        val copiedFiles = mutableListOf<Pair<File, File>>()
-
-        for (srcFile in files) {
-            val relPath = srcFile.absolutePath.removePrefix(sessionDir.absolutePath).trimStart('/', '\\')
-            val dstFile = File(destDir, relPath)
-            dstFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
-
-            try {
-                FileInputStream(srcFile).use { input ->
-                    FileOutputStream(dstFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                if (dstFile.exists() && dstFile.length() == srcFile.length()) {
-                    copiedFiles.add(srcFile to dstFile)
-                } else {
-                    copySuccess = false
-                    break
-                }
-            } catch (e: Exception) {
-                Log.e("StorageHelper", "Failed to copy ${srcFile.name} to SD card", e)
-                copySuccess = false
-                break
-            }
-        }
-
-        if (copySuccess && copiedFiles.size == files.size) {
-            for ((srcFile, _) in copiedFiles) {
-                srcFile.delete()
-            }
-            sessionDir.deleteRecursively()
-            Log.i("StorageHelper", "Successfully moved session ${sessionDir.name} to SD Card at ${destDir.absolutePath}")
-            return true
-        } else {
-            for ((_, dstFile) in copiedFiles) {
-                dstFile.delete()
-            }
-            if (destDir.listFiles()?.isEmpty() == true) destDir.delete()
-            Log.e("StorageHelper", "Failed to move session ${sessionDir.name} to SD Card")
-            return false
-        }
-    }
-
-    /**
-     * 指定されたセッションディレクトリの画像を削除する (MediaStore 連携対応)
-     */
-    fun clearIntervalImages(sessionDir: File? = null, context: Context? = null): Boolean {
-        val files = getIntervalImageFiles(sessionDir, context)
-        var allDeleted = true
-        val contentResolver = context?.contentResolver
-
-        for (file in files) {
-            try {
-                if (contentResolver != null) {
-                    val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                    val selection = "${MediaStore.Images.Media.DATA} = ?"
-                    val selectionArgs = arrayOf(file.absolutePath)
-                    contentResolver.delete(uri, selection, selectionArgs)
-                }
-            } catch (e: Exception) {
-                Log.w("StorageHelper", "MediaStore delete failed for ${file.absolutePath}", e)
-            }
-
-            try {
-                if (file.exists() && !file.delete()) {
-                    System.gc()
-                    if (file.exists()) file.delete()
-                }
-                if (file.exists()) {
-                    allDeleted = false
-                }
-            } catch (e: Exception) {
-                Log.e("StorageHelper", "Failed to delete file ${file.absolutePath}", e)
-                allDeleted = false
-            }
-        }
-
-        if (sessionDir != null && sessionDir.exists()) {
-            try {
-                sessionDir.walkBottomUp().forEach { it.delete() }
-                sessionDir.delete()
-            } catch (e: Exception) {
-                Log.e("StorageHelper", "Failed to delete session directory ${sessionDir.absolutePath}", e)
-            }
-        }
-
-        return allDeleted
-    }
-
-    /**
-     * すべてのインターバル撮影セッションの画像をすべて削除する
-     */
-    fun clearAllIntervalImages(context: Context? = null): Boolean {
-        val sessions = getIntervalSessions(context)
-        var allDeleted = true
-        for (session in sessions) {
-            if (!clearIntervalImages(session, context)) {
-                allDeleted = false
-            }
-        }
-        val legacyDir = getPublicAStargazerDir("Interval", context = context)
-        if (legacyDir.exists()) {
-            try {
-                legacyDir.walkBottomUp().forEach { it.delete() }
-                legacyDir.delete()
-            } catch (_: Exception) {}
-        }
-        return allDeleted
     }
 }

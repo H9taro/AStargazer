@@ -31,7 +31,7 @@ object FileViewerHelper {
         scanFile(context, file) { scannedUri ->
             val contentUri = scannedUri ?: FileProvider.getUriForFile(
                 context,
-                "${context.packageName}.provider",
+                "${context.packageName}.fileprovider",
                 file
             )
 
@@ -70,6 +70,42 @@ object FileViewerHelper {
                 context.startActivity(chooser)
             } catch (e: Exception) {
                 Log.e("FileViewerHelper", "No app available to view file", e)
+            }
+        }
+    }
+
+    /**
+     * 単一の画像ファイルを Android 標準共有シート (ACTION_SEND) で共有する（TransactionTooLargeException回避）
+     */
+    fun shareSingleFile(context: Context, file: File) {
+        if (!file.exists()) return
+
+        scanFile(context, file) { scannedUri ->
+            val contentUri = scannedUri ?: try {
+                FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
+                )
+            } catch (e: Exception) {
+                Log.w("FileViewerHelper", "Failed FileProvider getUriForFile", e)
+                null
+            } ?: return@scanFile
+
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/jpeg"
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            val chooser = Intent.createChooser(shareIntent, "画像を共有: ${file.name}").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            try {
+                context.startActivity(chooser)
+            } catch (e: Exception) {
+                Log.e("FileViewerHelper", "Failed to launch share chooser", e)
             }
         }
     }
