@@ -266,11 +266,19 @@ object StorageHelper {
                     !name.startsWith(".") &&
                     !name.startsWith(".trashed") &&
                     (ext == "jpg" || ext == "jpeg" || ext == "png")
-        }?.sortedBy { it.name }?.toList() ?: emptyList()
+        }?.sortedBy { file ->
+            // ファイル名内の UTC タイムスタンプをメモリ上で抽出してソートキーにする
+            // 新形式 (IMG_1740000000000.jpg -> index 1) と旧形式 (IMG_0001_1740000000000.jpg -> index 2) の両方に対応
+            val cleanName = file.name.substringBeforeLast('.')
+            val parts = cleanName.split('_')
+            parts.getOrNull(1)?.toLongOrNull() ?: parts.getOrNull(2)?.toLongOrNull() ?: file.name.hashCode().toLong()
+        }?.toList() ?: emptyList()
     }
 
+    @Suppress("UNUSED_PARAMETER")
     fun createIntervalJpegFile(index: Int, sessionDir: File? = null, context: Context? = null): File {
         val dir = sessionDir ?: getNextIntervalSessionDir(context = context)
-        return File(dir, "IMG_%04d_%d.jpg".format(Locale.JAPAN, index, System.currentTimeMillis()))
+        // 0001連番を廃止し、よりシンプルな IMG_{timestamp}.jpg 形式で生成
+        return File(dir, "IMG_%d.jpg".format(Locale.JAPAN, System.currentTimeMillis()))
     }
 }
